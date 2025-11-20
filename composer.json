@@ -1,0 +1,22 @@
+{
+  "name": "blitzcdn/media-offload",
+  "description": "Offload WordPress Media Library files to Appwrite Storage and serve via CDN.",
+  "type": "wordpress-plugin",
+  "license": "GPL-2.0-or-later",
+  "authors": [
+    {
+      "name": "BlitzCDN Team",
+      "email": "support@blitzcdn.net"
+    }
+  ],
+  "require": {
+    "php": ">=7.4",
+    "appwrite/appwrite": "^10.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "BlitzCDN\\": "includes/",
+      "BlitzCDN\\Admin\\": "admin/"
+    }
+  }
+}
