@@ -91,6 +91,15 @@ class Settings {
             'blitzcdn_main_section',
             ['field' => 'safe_delete', 'description' => 'Warning: Only enable if you are sure. Deletes local files only after successful upload.']
         );
+
+        add_settings_field(
+            'delete_remote',
+            'Delete from Appwrite',
+            [$this, 'render_checkbox_field'],
+            'blitzcdn',
+            'blitzcdn_main_section',
+            ['field' => 'delete_remote', 'description' => 'When you delete an image from WordPress, delete it from Appwrite as well.']
+        );
     }
 
     public function render_text_field($args) {

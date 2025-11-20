@@ -18,6 +18,9 @@ class UploadHandler {
 
         // Phase 2: Intermediate Image Sizes
         add_filter('wp_generate_attachment_metadata', [$this, 'handle_upload_phase_2'], 10, 2);
+
+        // Handle Deletion
+        add_action('delete_attachment', [$this, 'handle_delete_attachment']);
     }
 
     /**
@@ -220,6 +223,35 @@ class UploadHandler {
                 $file_path = path_join($base_dir, path_join($subdir, $file_name));
                 if (file_exists($file_path)) {
                     unlink($file_path);
+                }
+            }
+        }
+    }
+
+    /**
+     * Handle attachment deletion.
+     * Deletes files from Appwrite if the option is enabled.
+     */
+    public function handle_delete_attachment($post_id) {
+        $settings = get_option('blitzcdn_settings', []);
+        $delete_remote = $settings['delete_remote'] ?? false;
+
+        if (!$delete_remote || !$this->appwrite_client->is_configured()) {
+            return;
+        }
+
+        // Delete original file
+        $file_id = get_post_meta($post_id, '_blitzcdn_file_id', true);
+        if ($file_id) {
+            $this->appwrite_client->delete_file($file_id);
+        }
+
+        // Delete sizes
+        $sizes_meta = get_post_meta($post_id, '_blitzcdn_sizes', true);
+        if (is_array($sizes_meta)) {
+            foreach ($sizes_meta as $size_info) {
+                if (isset($size_info['file_id'])) {
+                    $this->appwrite_client->delete_file($size_info['file_id']);
                 }
             }
         }

@@ -55,6 +55,7 @@ class Core {
                 'endpoint' => 'https://cloud.appwrite.io/v1',
                 'serve_from_cdn' => false,
                 'safe_delete' => false,
+                'delete_remote' => false,
             ]);
         }
     }

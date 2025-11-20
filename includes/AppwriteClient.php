@@ -75,4 +75,24 @@ class AppwriteClient {
             return false;
         }
     }
+
+    /**
+     * Delete a file from Appwrite Storage.
+     *
+     * @param string $file_id The ID of the file to delete.
+     * @return bool True on success, false on failure.
+     */
+    public function delete_file($file_id) {
+        if (!$this->is_configured) {
+            return false;
+        }
+
+        try {
+            $this->storage->deleteFile($this->bucket_id, $file_id);
+            return true;
+        } catch (\Throwable $e) {
+            error_log('BlitzCDN Delete Error: ' . $e->getMessage());
+            return false;
+        }
+    }
 }
