@@ -24,54 +24,9 @@ class Settings {
 
         add_settings_section(
             'blitzcdn_main_section',
-            'Appwrite Configuration',
+            '🚧 Warning 🚨: Improper configuration may lead to data loss. Please reach out to us for assistance. 🚧',
             null,
             'blitzcdn'
-        );
-
-        add_settings_field(
-            'project_id',
-            'Project ID',
-            [$this, 'render_text_field'],
-            'blitzcdn',
-            'blitzcdn_main_section',
-            ['field' => 'project_id']
-        );
-
-        add_settings_field(
-            'api_key',
-            'API Key',
-            [$this, 'render_password_field'],
-            'blitzcdn',
-            'blitzcdn_main_section',
-            ['field' => 'api_key']
-        );
-
-        add_settings_field(
-            'bucket_id',
-            'Bucket ID',
-            [$this, 'render_text_field'],
-            'blitzcdn',
-            'blitzcdn_main_section',
-            ['field' => 'bucket_id']
-        );
-
-        add_settings_field(
-            'endpoint',
-            'Appwrite Endpoint',
-            [$this, 'render_text_field'],
-            'blitzcdn',
-            'blitzcdn_main_section',
-            ['field' => 'endpoint', 'default' => 'https://cloud.appwrite.io/v1']
-        );
-
-        add_settings_field(
-            'cdn_domain',
-            'CDN Domain',
-            [$this, 'render_text_field'],
-            'blitzcdn',
-            'blitzcdn_main_section',
-            ['field' => 'cdn_domain', 'description' => 'e.g. files.blitzcdn.net']
         );
 
         add_settings_field(

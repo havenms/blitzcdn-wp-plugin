@@ -162,10 +162,9 @@ class UploadHandler {
     }
 
     private function get_cdn_url($file_id) {
-        $settings = get_option('blitzcdn_settings', []);
-        $cdn_domain = rtrim($settings['cdn_domain'] ?? '', '/');
-        $bucket_id = $settings['bucket_id'] ?? '';
-        $project_id = $settings['project_id'] ?? '';
+        $cdn_domain = rtrim($this->appwrite_client->get_cdn_domain(), '/');
+        $bucket_id = $this->appwrite_client->get_bucket_id();
+        $project_id = $this->appwrite_client->get_project_id();
         
         // If CDN domain is set, use it.
         // Format: https://files.blitzcdn.net/bucket_id/file_id
@@ -183,7 +182,7 @@ class UploadHandler {
         
         // Let's construct the standard Appwrite view URL but replace the endpoint host with the CDN domain.
         
-        $endpoint = $settings['endpoint'] ?? 'https://cloud.appwrite.io/v1';
+        $endpoint = $this->appwrite_client->get_endpoint();
         $parsed_endpoint = parse_url($endpoint);
         $endpoint_path = $parsed_endpoint['path'] ?? '/v1';
         
