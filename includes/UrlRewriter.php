@@ -73,8 +73,8 @@ class UrlRewriter {
             if ($cdn_url) {
                 // We need width and height.
                 $meta = wp_get_attachment_metadata($id);
-                $width = $meta['width'] ?? 0;
-                $height = $meta['height'] ?? 0;
+                $width = (is_array($meta) && isset($meta['width'])) ? $meta['width'] : 0;
+                $height = (is_array($meta) && isset($meta['height'])) ? $meta['height'] : 0;
                 return [$cdn_url, $width, $height, false];
             }
         } else {
@@ -86,7 +86,7 @@ class UrlRewriter {
                 $meta = wp_get_attachment_metadata($id);
                 $width = 0;
                 $height = 0;
-                if (isset($meta['sizes'][$size])) {
+                if (is_array($meta) && isset($meta['sizes'][$size])) {
                     $width = $meta['sizes'][$size]['width'];
                     $height = $meta['sizes'][$size]['height'];
                 }
@@ -104,13 +104,17 @@ class UrlRewriter {
     public function filter_srcset($sources, $size_array, $image_src, $image_meta, $attachment_id) {
         $sizes_meta = get_post_meta($attachment_id, '_blitzcdn_sizes', true);
         
-        if (!is_array($sizes_meta)) {
+        if (!is_array($sizes_meta) || !is_array($sources)) {
             return $sources;
         }
 
         foreach ($sources as $width => $source) {
             // We need to find which size name corresponds to this width/file.
             // $image_meta['sizes'] contains the mapping.
+            if (!isset($image_meta['sizes']) || !is_array($image_meta['sizes'])) {
+                continue;
+            }
+
             foreach ($image_meta['sizes'] as $name => $size_info) {
                 if ($size_info['width'] == $width) {
                     // Found the size name
