@@ -4,14 +4,18 @@ namespace BlitzCDN;
 
 use Appwrite\Client;
 use Appwrite\Services\Storage;
+use Appwrite\Services\Databases;
 use Appwrite\InputFile;
 
 class AppwriteClient {
 
     private $client;
     private $storage;
+    private $databases;
     private $project_id;
     private $bucket_id;
+    private $db_id;
+    private $collection_id;
     private $endpoint;
     private $cdn_domain;
     private $is_configured = false;
@@ -22,6 +26,8 @@ class AppwriteClient {
         $this->project_id = getenv('APPWRITE_PROJECT_ID') ?: ($_ENV['APPWRITE_PROJECT_ID'] ?? '');
         $api_key = getenv('APPWRITE_API_KEY') ?: ($_ENV['APPWRITE_API_KEY'] ?? '');
         $this->bucket_id = getenv('APPWRITE_BUCKET_ID') ?: ($_ENV['APPWRITE_BUCKET_ID'] ?? '');
+        $this->db_id = getenv('APPWRITE_DB_ID') ?: ($_ENV['APPWRITE_DB_ID'] ?? '');
+        $this->collection_id = getenv('APPWRITE_COLLECTION_ID') ?: ($_ENV['APPWRITE_COLLECTION_ID'] ?? '');
         $this->endpoint = getenv('APPWRITE_ENDPOINT') ?: ($_ENV['APPWRITE_ENDPOINT'] ?? 'https://cloud.appwrite.io/v1');
         $this->cdn_domain = getenv('APPWRITE_CDN_DOMAIN') ?: ($_ENV['APPWRITE_CDN_DOMAIN'] ?? '');
 
@@ -33,6 +39,7 @@ class AppwriteClient {
                 ->setKey($api_key);
 
             $this->storage = new Storage($this->client);
+            $this->databases = new Databases($this->client);
             $this->is_configured = true;
         }
     }
@@ -78,6 +85,14 @@ class AppwriteClient {
         return $this->endpoint;
     }
 
+    public function get_db_id() {
+        return $this->db_id;
+    }
+
+    public function get_collection_id() {
+        return $this->collection_id;
+    }
+
     /**
      * Upload a file to Appwrite Storage.
      *
@@ -119,6 +134,30 @@ class AppwriteClient {
             return true;
         } catch (\Throwable $e) {
             error_log('BlitzCDN Delete Error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Create a document in Appwrite Database.
+     *
+     * @param array $data Document data.
+     * @return array|false Document object on success, false on failure.
+     */
+    public function create_document($data) {
+        if (!$this->is_configured || !$this->db_id || !$this->collection_id) {
+            return false;
+        }
+
+        try {
+            return $this->databases->createDocument(
+                $this->db_id,
+                $this->collection_id,
+                'unique()',
+                $data
+            );
+        } catch (\Throwable $e) {
+            error_log('BlitzCDN: Failed to create document: ' . $e->getMessage());
             return false;
         }
     }

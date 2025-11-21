@@ -31,6 +31,13 @@ class UploadHandler {
             return $upload;
         }
 
+        $settings = get_option('blitzcdn_settings', []);
+        $account_email = $settings['account_email'] ?? '';
+
+        if (empty($account_email)) {
+            return $upload;
+        }
+
         if (isset($upload['file']) && !isset($upload['error'])) {
             $file_path = $upload['file'];
             $file_name = basename($file_path);
@@ -41,6 +48,14 @@ class UploadHandler {
             if ($file_id) {
                 // Cache the result for the next step (add_attachment)
                 self::$uploaded_files[$file_path] = $file_id;
+
+                // Track upload in Database
+                $this->appwrite_client->create_document([
+                    'email' => $account_email,
+                    'fileId' => $file_id,
+                    'originalUrl' => $upload['url'] ?? '',
+                    'createdAt' => date('c')
+                ]);
             } else {
                 // Log failure, but do not stop WordPress
                 error_log("BlitzCDN: Failed to upload original file: $file_name");
@@ -88,6 +103,13 @@ class UploadHandler {
             return $metadata;
         }
 
+        $settings = get_option('blitzcdn_settings', []);
+        $account_email = $settings['account_email'] ?? '';
+
+        if (empty($account_email)) {
+            return $metadata;
+        }
+
         // Ensure original file metadata exists (in case Phase 1 missed it or it's a regeneration)
         $original_file_id = get_post_meta($attachment_id, '_blitzcdn_file_id', true);
         if (!$original_file_id) {
@@ -101,6 +123,14 @@ class UploadHandler {
                     update_post_meta($attachment_id, '_blitzcdn_file_id', $file_id);
                     update_post_meta($attachment_id, '_blitzcdn_cdn_url', $cdn_url);
                     $original_file_id = $file_id;
+
+                    // Track upload in Database
+                    $this->appwrite_client->create_document([
+                        'email' => $account_email,
+                        'fileId' => $file_id,
+                        'originalUrl' => wp_get_attachment_url($attachment_id),
+                        'createdAt' => date('c')
+                    ]);
                 }
             }
         }
@@ -132,6 +162,14 @@ class UploadHandler {
                             'file_id' => $file_id,
                             'url' => $cdn_url
                         ];
+
+                        // Track upload in Database
+                        $this->appwrite_client->create_document([
+                            'email' => $account_email,
+                            'fileId' => $file_id,
+                            'originalUrl' => '', // Hard to get exact URL for size here without constructing it
+                            'createdAt' => date('c')
+                        ]);
                     } else {
                         $all_uploads_successful = false;
                         error_log("BlitzCDN: Failed to upload size: $size_name for attachment $attachment_id");

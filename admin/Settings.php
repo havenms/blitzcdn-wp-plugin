@@ -30,6 +30,15 @@ class Settings {
         );
 
         add_settings_field(
+            'account_email',
+            'Account Email',
+            [$this, 'render_text_field'],
+            'blitzcdn',
+            'blitzcdn_main_section',
+            ['field' => 'account_email', 'description' => 'Required to enable uploads and migrations.']
+        );
+
+        add_settings_field(
             'serve_from_cdn',
             'Serve from CDN',
             [$this, 'render_checkbox_field'],

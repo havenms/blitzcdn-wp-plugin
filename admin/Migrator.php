@@ -63,6 +63,11 @@ class Migrator {
             wp_send_json_error('Unauthorized');
         }
 
+        $settings = get_option('blitzcdn_settings', []);
+        if (empty($settings['account_email'])) {
+            wp_send_json_error('Account email not configured. Please set your email in BlitzCDN settings.');
+        }
+
         $ids = isset($_POST['ids']) ? array_map('intval', $_POST['ids']) : [];
         
         if (empty($ids)) {
@@ -105,6 +110,11 @@ class Migrator {
     public function ajax_start_background_migration() {
         check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
         if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
+
+        $settings = get_option('blitzcdn_settings', []);
+        if (empty($settings['account_email'])) {
+            wp_send_json_error('Account email not configured. Please set your email in BlitzCDN settings.');
+        }
 
         Core::get_instance()->get_background_migrator()->start_migration();
         wp_send_json_success();
