@@ -1,0 +1,15 @@
+{
+  "name": "node-scripts",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "node-appwrite": "^20.3.0"
+  }
+}

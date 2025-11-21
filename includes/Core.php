@@ -12,6 +12,7 @@ class Core {
     private $upload_handler;
     private $url_rewriter;
     private $compatibility;
+    private $background_process;
 
     public static function get_instance() {
         if (null === self::$instance) {
@@ -36,6 +37,9 @@ class Core {
 
         // Initialize Compatibility
         $this->compatibility = new Compatibility();
+
+        // Initialize Background Process
+        $this->background_process = new BackgroundProcess();
 
         // Initialize Admin Components
         if (is_admin()) {
@@ -66,5 +70,9 @@ class Core {
 
     public function get_upload_handler() {
         return $this->upload_handler;
+    }
+
+    public function get_background_process() {
+        return $this->background_process;
     }
 }

@@ -16,6 +16,36 @@ jQuery(document).ready(function ($) {
         startMigration();
     });
 
+    $('#blitzcdn-bg-migrate-btn').on('click', function (e) {
+        e.preventDefault();
+        if (isMigrating) return;
+
+        if (!confirm('Start background migration? This will process images in the background. You can close this page.')) {
+            return;
+        }
+
+        $('#blitzcdn-bg-migrate-btn').prop('disabled', true);
+        $('#blitzcdn-migration-progress').show();
+        log('Starting background migration...');
+
+        $.post(blitzcdn_migration.ajax_url, {
+            action: 'blitzcdn_start_background_migration',
+            nonce: blitzcdn_migration.nonce
+        }, function (response) {
+            if (response.success) {
+                log(response.data.message);
+                log('Queued ' + response.data.count + ' items.');
+                alert(response.data.message);
+            } else {
+                log('Error: ' + response.data);
+                $('#blitzcdn-bg-migrate-btn').prop('disabled', false);
+            }
+        }).fail(function () {
+            log('Ajax error.');
+            $('#blitzcdn-bg-migrate-btn').prop('disabled', false);
+        });
+    });
+
     function startMigration() {
         isMigrating = true;
         $('#blitzcdn-migrate-btn').prop('disabled', true);

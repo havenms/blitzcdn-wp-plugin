@@ -11,7 +11,8 @@
   ],
   "require": {
     "php": ">=7.4",
-    "appwrite/appwrite": "^10.0"
+    "appwrite/appwrite": "^10.0",
+    "deliciousbrains/wp-background-processing": "^1.0"
   },
   "autoload": {
     "psr-4": {

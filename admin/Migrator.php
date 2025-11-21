@@ -12,6 +12,7 @@ class Migrator {
         $this->appwrite_client = $appwrite_client;
         add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_action('wp_ajax_blitzcdn_migrate_batch', [$this, 'ajax_migrate_batch']);
+        add_action('wp_ajax_blitzcdn_start_background_migration', [$this, 'ajax_start_background_migration']);
         add_action('wp_ajax_blitzcdn_get_migration_stats', [$this, 'ajax_get_stats']);
     }
 
@@ -95,5 +96,42 @@ class Migrator {
         }
 
         wp_send_json_success($results);
+    }
+
+    public function ajax_start_background_migration() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $query = new \WP_Query([
+            'post_type' => 'attachment',
+            'post_status' => 'inherit',
+            'posts_per_page' => -1,
+            'fields' => 'ids',
+            'meta_query' => [
+                [
+                    'key' => '_blitzcdn_file_id',
+                    'compare' => 'NOT EXISTS'
+                ]
+            ]
+        ]);
+
+        $ids = $query->posts;
+        
+        if (empty($ids)) {
+            wp_send_json_error('No items to migrate.');
+        }
+
+        $bg_process = Core::get_instance()->get_background_process();
+
+        foreach ($ids as $id) {
+            $bg_process->push_to_queue($id);
+        }
+
+        $bg_process->save()->dispatch();
+
+        wp_send_json_success(['message' => 'Background migration started. You can close this window.', 'count' => count($ids)]);
     }
 }
