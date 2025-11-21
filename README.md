@@ -217,6 +217,51 @@ The plugin includes a bulk migration tool to offload existing media:
 - Updates progress and logs results
 - Handles errors gracefully without stopping the process
 
+### Background Migration (server-side)
+
+For large sites the plugin supports a server-side background migration which continues processing even when the browser is closed. This uses WordPress' built-in cron system (WP-Cron) and the plugin's `BackgroundMigrator` class to process attachments in small batches.
+
+Key points:
+
+- **Class:** `\BlitzCDN\BackgroundMigrator` — registers a cron hook `blitzcdn_background_migration_batch` and exposes methods to start/stop the process.
+- **Scheduling:** The migrator schedules a single cron event for each batch using `wp_schedule_single_event()` and re-schedules itself after each batch (chained single events). This reduces per-request time and avoids long-running processes.
+- **Batch size:** Default is small (`5`) to avoid PHP timeouts; the batch size is defined as `BATCH_SIZE` in `includes/BackgroundMigrator.php` and can be adjusted in code if necessary.
+- **Status storage:** Migration state is stored in the `blitzcdn_migration_status` option. The option contains at least these keys:
+   - `status` — `'running'`, `'stopped'`, `'completed'`, or `'idle'`
+   - `processed` — number of attachments processed so far
+   - `total` — total attachments at the start of migration
+   - `start_time` / `completed_time` — timestamps
+- **Admin controls & UI:** The settings page (`Settings > BlitzCDN`) includes:
+   - `Start Background Migration` button (AJAX endpoint `wp_ajax_blitzcdn_start_background_migration`)
+   - `Stop Background Migration` button (AJAX endpoint `wp_ajax_blitzcdn_stop_background_migration`)
+   - Status polling (AJAX endpoint `wp_ajax_blitzcdn_get_background_status`) to update processed/total in the UI.
+- **How each batch works:** For each attachment ID in the batch the migrator calls the existing Phase 2 logic (`UploadHandler::handle_upload_phase_2`) so the same upload and metadata handling is reused.
+
+Notes and recommendations:
+
+- WP-Cron is triggered by site requests by default. For reliable background processing on low-traffic sites, set up a system cron to trigger WP-Cron regularly (recommended every minute). Example crontab lines:
+
+   - Using `curl`:
+
+      ```bash
+      * * * * * curl -s "https://example.com/wp-cron.php?doing_wp_cron" > /dev/null 2>&1
+      ```
+
+   - Using `wget`:
+
+      ```bash
+      * * * * * wget -q -O - "https://example.com/wp-cron.php?doing_wp_cron" > /dev/null 2>&1
+      ```
+
+- If you manage multiple sites or want more control, consider triggering `wp-cron.php` with `php` from the WordPress install directory (ensure file permissions and path are correct).
+- Keep `BATCH_SIZE` conservative on shared hosts to avoid memory/time limits. Increase only when you have tested the environment's capacity.
+- Logs and errors are written via `error_log()` and appear in `wp-content/debug.log` when `WP_DEBUG_LOG` is enabled.
+- The background migrator will continue processing across multiple requests (and after the admin browser is closed) so long as WP-Cron is being triggered (by traffic or a system cron).
+
+### Browser-based migration (existing behavior)
+
+The original AJAX-based migration UI remains available for manual runs from the admin screen. This is useful for small sites or when you want immediate, browser-visible logging. On large sites, prefer the background migration for reliability and to avoid long-running admin requests.
+
 ## Compatibility
 
 ### Supported Plugins
