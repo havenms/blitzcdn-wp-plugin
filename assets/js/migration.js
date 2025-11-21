@@ -16,36 +16,6 @@ jQuery(document).ready(function ($) {
         startMigration();
     });
 
-    $('#blitzcdn-bg-migrate-btn').on('click', function (e) {
-        e.preventDefault();
-        if (isMigrating) return;
-
-        if (!confirm('Start background migration? This will process images in the background. You can close this page.')) {
-            return;
-        }
-
-        $('#blitzcdn-bg-migrate-btn').prop('disabled', true);
-        $('#blitzcdn-migration-progress').show();
-        log('Starting background migration...');
-
-        $.post(blitzcdn_migration.ajax_url, {
-            action: 'blitzcdn_start_background_migration',
-            nonce: blitzcdn_migration.nonce
-        }, function (response) {
-            if (response.success) {
-                log(response.data.message);
-                log('Queued ' + response.data.count + ' items.');
-                alert(response.data.message);
-            } else {
-                log('Error: ' + response.data);
-                $('#blitzcdn-bg-migrate-btn').prop('disabled', false);
-            }
-        }).fail(function () {
-            log('Ajax error.');
-            $('#blitzcdn-bg-migrate-btn').prop('disabled', false);
-        });
-    });
-
     function startMigration() {
         isMigrating = true;
         $('#blitzcdn-migrate-btn').prop('disabled', true);
@@ -133,4 +103,77 @@ jQuery(document).ready(function ($) {
         var timestamp = new Date().toLocaleTimeString();
         $('#blitzcdn-migration-log').prepend('<div>[' + timestamp + '] ' + message + '</div>');
     }
+
+    // Background Migration Logic
+    var bgPollInterval;
+
+    function checkBackgroundStatus() {
+        $.post(blitzcdn_migration.ajax_url, {
+            action: 'blitzcdn_get_background_status',
+            nonce: blitzcdn_migration.nonce
+        }, function (response) {
+            if (response.success) {
+                var status = response.data;
+                updateBackgroundUI(status);
+            }
+        });
+    }
+
+    function updateBackgroundUI(status) {
+        $('#blitzcdn-background-status').show();
+        $('#blitzcdn-bg-status-text').text(status.status);
+        
+        if (status.status === 'running') {
+            $('#blitzcdn-background-migrate-btn').hide();
+            $('#blitzcdn-stop-background-migrate-btn').show();
+            $('#blitzcdn-bg-processed').text(status.processed);
+            $('#blitzcdn-bg-total').text(status.total);
+            
+            if (!bgPollInterval) {
+                bgPollInterval = setInterval(checkBackgroundStatus, 5000);
+            }
+        } else {
+            $('#blitzcdn-background-migrate-btn').show();
+            $('#blitzcdn-stop-background-migrate-btn').hide();
+            if (status.completed_time) {
+                 $('#blitzcdn-bg-status-text').text('Completed at ' + new Date(status.completed_time * 1000).toLocaleTimeString());
+                 $('#blitzcdn-bg-processed').text(status.processed);
+                 $('#blitzcdn-bg-total').text(status.total);
+            }
+            
+            if (bgPollInterval) {
+                clearInterval(bgPollInterval);
+                bgPollInterval = null;
+            }
+        }
+    }
+
+    $('#blitzcdn-background-migrate-btn').on('click', function(e) {
+        e.preventDefault();
+        if (!confirm('Start background migration? This will run on the server.')) return;
+        
+        $.post(blitzcdn_migration.ajax_url, {
+            action: 'blitzcdn_start_background_migration',
+            nonce: blitzcdn_migration.nonce
+        }, function(response) {
+            if (response.success) {
+                checkBackgroundStatus();
+            } else {
+                alert('Failed to start: ' + response.data);
+            }
+        });
+    });
+
+    $('#blitzcdn-stop-background-migrate-btn').on('click', function(e) {
+        e.preventDefault();
+        $.post(blitzcdn_migration.ajax_url, {
+            action: 'blitzcdn_stop_background_migration',
+            nonce: blitzcdn_migration.nonce
+        }, function(response) {
+            checkBackgroundStatus();
+        });
+    });
+
+    // Initial check
+    checkBackgroundStatus();
 });

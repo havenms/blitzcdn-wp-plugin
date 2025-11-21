@@ -103,8 +103,17 @@ class Settings {
             
             <h2>Migration Tool</h2>
             <p>Migrate existing media to Appwrite.</p>
-            <button id="blitzcdn-migrate-btn" class="button button-secondary">Migrate Existing Media (Browser)</button>
-            <button id="blitzcdn-bg-migrate-btn" class="button button-primary">Start Background Migration</button>
+            <p>
+                <button id="blitzcdn-migrate-btn" class="button button-secondary">Migrate Existing Media (Browser)</button>
+                <button id="blitzcdn-background-migrate-btn" class="button button-primary">Start Background Migration</button>
+                <button id="blitzcdn-stop-background-migrate-btn" class="button button-secondary" style="display:none;">Stop Background Migration</button>
+            </p>
+            
+            <div id="blitzcdn-background-status" style="margin-top: 10px; display: none; padding: 10px; background: #fff; border: 1px solid #ccd0d4;">
+                <p><strong>Background Migration Status:</strong> <span id="blitzcdn-bg-status-text">Idle</span></p>
+                <p>Processed: <span id="blitzcdn-bg-processed">0</span> / <span id="blitzcdn-bg-total">0</span></p>
+            </div>
+
             <div id="blitzcdn-migration-progress" style="margin-top: 20px; display: none;">
                 <div style="background: #f0f0f1; border: 1px solid #ccc; height: 20px; width: 100%;">
                     <div id="blitzcdn-progress-bar" style="background: #2271b1; height: 100%; width: 0%;"></div>

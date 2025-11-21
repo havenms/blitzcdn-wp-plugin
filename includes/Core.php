@@ -12,7 +12,7 @@ class Core {
     private $upload_handler;
     private $url_rewriter;
     private $compatibility;
-    private $background_process;
+    private $background_migrator;
 
     public static function get_instance() {
         if (null === self::$instance) {
@@ -38,8 +38,8 @@ class Core {
         // Initialize Compatibility
         $this->compatibility = new Compatibility();
 
-        // Initialize Background Process
-        $this->background_process = new BackgroundProcess();
+        // Initialize Background Migrator
+        $this->background_migrator = new BackgroundMigrator();
 
         // Initialize Admin Components
         if (is_admin()) {
@@ -72,7 +72,7 @@ class Core {
         return $this->upload_handler;
     }
 
-    public function get_background_process() {
-        return $this->background_process;
+    public function get_background_migrator() {
+        return $this->background_migrator;
     }
 }
