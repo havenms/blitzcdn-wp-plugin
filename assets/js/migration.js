@@ -2,7 +2,9 @@ jQuery(document).ready(function ($) {
     var isMigrating = false;
     var totalItems = 0;
     var processedItems = 0;
-    var batchSize = 5;
+    var batchSize = 10;
+    var concurrency = 5;
+    var activeRequests = 0;
     var itemIds = [];
 
     $('#blitzcdn-migrate-btn').on('click', function (e) {
@@ -33,7 +35,10 @@ jQuery(document).ready(function ($) {
                 log('Found ' + totalItems + ' items to migrate.');
 
                 if (totalItems > 0) {
-                    processBatch();
+                    var initialBatches = Math.min(concurrency, Math.ceil(totalItems / batchSize));
+                    for (var i = 0; i < initialBatches; i++) {
+                        processBatch();
+                    }
                 } else {
                     finishMigration();
                 }
@@ -47,10 +52,13 @@ jQuery(document).ready(function ($) {
 
     function processBatch() {
         if (itemIds.length === 0) {
-            finishMigration();
+            if (activeRequests === 0) {
+                finishMigration();
+            }
             return;
         }
 
+        activeRequests++;
         var batch = itemIds.splice(0, batchSize);
 
         $.post(blitzcdn_migration.ajax_url, {
@@ -72,8 +80,6 @@ jQuery(document).ready(function ($) {
             } else {
                 log('Batch failed: ' + response.data);
             }
-
-            processBatch();
         }).fail(function () {
             log('Ajax error. Retrying...');
             // Put back the batch? Or skip? Let's retry once or skip.
@@ -81,6 +87,8 @@ jQuery(document).ready(function ($) {
             log('Skipping batch due to network error.');
             processedItems += batch.length;
             updateProgress();
+        }).always(function () {
+            activeRequests--;
             processBatch();
         });
     }
@@ -93,6 +101,7 @@ jQuery(document).ready(function ($) {
     }
 
     function finishMigration() {
+        if (!isMigrating) return;
         isMigrating = false;
         $('#blitzcdn-migrate-btn').prop('disabled', false);
         log('Migration complete.');

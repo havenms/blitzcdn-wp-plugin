@@ -52,6 +52,9 @@ class Migrator {
     }
 
     public function ajax_migrate_batch() {
+        // Increase time limit for larger batches
+        set_time_limit(300);
+
         check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
 
         if (!current_user_can('manage_options')) {
