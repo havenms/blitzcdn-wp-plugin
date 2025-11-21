@@ -1,15 +1,15 @@
-jQuery(document).ready(function($) {
+jQuery(document).ready(function ($) {
     var isMigrating = false;
     var totalItems = 0;
     var processedItems = 0;
     var batchSize = 5;
     var itemIds = [];
 
-    $('#blitzcdn-migrate-btn').on('click', function(e) {
+    $('#blitzcdn-migrate-btn').on('click', function (e) {
         e.preventDefault();
         if (isMigrating) return;
 
-        if (!confirm('Are you sure you want to migrate existing media to Appwrite? This may take a while.')) {
+        if (!confirm('Are you sure you want to migrate existing media to BlitzCDN? This may take a while.')) {
             return;
         }
 
@@ -26,12 +26,12 @@ jQuery(document).ready(function($) {
         $.post(blitzcdn_migration.ajax_url, {
             action: 'blitzcdn_get_migration_stats',
             nonce: blitzcdn_migration.nonce
-        }, function(response) {
+        }, function (response) {
             if (response.success) {
                 totalItems = response.data.total;
                 itemIds = response.data.ids;
                 log('Found ' + totalItems + ' items to migrate.');
-                
+
                 if (totalItems > 0) {
                     processBatch();
                 } else {
@@ -52,17 +52,17 @@ jQuery(document).ready(function($) {
         }
 
         var batch = itemIds.splice(0, batchSize);
-        
+
         $.post(blitzcdn_migration.ajax_url, {
             action: 'blitzcdn_migrate_batch',
             nonce: blitzcdn_migration.nonce,
             ids: batch
-        }, function(response) {
+        }, function (response) {
             processedItems += batch.length;
             updateProgress();
 
             if (response.success) {
-                $.each(response.data, function(id, result) {
+                $.each(response.data, function (id, result) {
                     if (result.status === 'success') {
                         log('Item ' + id + ': Success');
                     } else {
@@ -74,7 +74,7 @@ jQuery(document).ready(function($) {
             }
 
             processBatch();
-        }).fail(function() {
+        }).fail(function () {
             log('Ajax error. Retrying...');
             // Put back the batch? Or skip? Let's retry once or skip.
             // For simplicity, we'll just stop or skip.
