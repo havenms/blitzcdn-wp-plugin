@@ -26,6 +26,9 @@ class Core {
     }
 
     private function init_components() {
+        // Ensure Action Scheduler is loaded
+        $this->load_action_scheduler();
+
         // Initialize Appwrite Client
         $this->appwrite_client = new AppwriteClient();
 
@@ -41,10 +44,36 @@ class Core {
         // Initialize Background Migrator
         $this->background_migrator = new BackgroundMigrator();
 
+        // Check Action Scheduler availability
+        $this->check_action_scheduler();
+
         // Initialize Admin Components
         if (is_admin()) {
             new Settings();
             new Migrator($this->appwrite_client);
+        }
+    }
+
+    private function load_action_scheduler() {
+        // Action Scheduler should be available via Composer
+        // Load it if it hasn't been loaded yet
+        $action_scheduler_path = BLITZCDN_PATH . 'vendor/woocommerce/action-scheduler/action-scheduler.php';
+        
+        if (file_exists($action_scheduler_path) && !class_exists('ActionScheduler', false)) {
+            require_once $action_scheduler_path;
+        }
+    }
+
+    private function check_action_scheduler() {
+        // Verify Action Scheduler is available
+        // If it's not available, show an admin notice
+        if (!function_exists('as_schedule_single_action') && is_admin()) {
+            add_action('admin_notices', function() {
+                echo '<div class="error"><p>';
+                echo '<strong>BlitzCDN:</strong> ';
+                echo esc_html__('Action Scheduler is not available. Background migrations will not work. Please run "composer install" in the plugin directory.', 'blitzcdn');
+                echo '</p></div>';
+            });
         }
     }
 

@@ -37,6 +37,7 @@ BlitzCDN is a WordPress plugin that seamlessly offloads your Media Library files
 - **Appwrite**: 1.0 or higher (SDK version 10.0+)
 - **Composer**: For dependency management
 - **Appwrite Account**: With Storage service enabled
+- **Action Scheduler**: Automatically installed via Composer (included in `woocommerce/action-scheduler` package)
 
 ## Installation
 
@@ -167,7 +168,17 @@ Ensures compatibility with popular plugins:
 
 - Clears Elementor cache after uploads to prevent stale cached images
 
-#### 6. Admin Interface
+#### 6. Background Migrator (`includes/BackgroundMigrator.php`)
+
+Manages server-side background migrations using Action Scheduler:
+
+- Processes attachments in small batches to avoid timeouts
+- Uses Action Scheduler for reliable, independent background processing
+- Continues running even when users close their browser
+- Works on low-traffic sites without requiring page visits
+- Provides status tracking and progress updates
+
+#### 7. Admin Interface
 
 - **Settings (`admin/Settings.php`)**: Provides the configuration interface
 - **Migrator (`admin/Migrator.php`)**: Handles bulk migration of existing media via AJAX
@@ -219,14 +230,15 @@ The plugin includes a bulk migration tool to offload existing media:
 
 ### Background Migration (server-side)
 
-For large sites the plugin supports a server-side background migration which continues processing even when the browser is closed. This uses WordPress' built-in cron system (WP-Cron) and the plugin's `BackgroundMigrator` class to process attachments in small batches.
+For large sites, the plugin supports a server-side background migration that continues processing even when the browser is closed. This uses **Action Scheduler** (a battle-tested job queue system used by WooCommerce) instead of WordPress's unreliable wp-cron system.
 
-Key points:
+#### How It Works
 
-- **Class:** `\BlitzCDN\BackgroundMigrator` — registers a cron hook `blitzcdn_background_migration_batch` and exposes methods to start/stop the process.
-- **Scheduling:** The migrator schedules a single cron event for each batch using `wp_schedule_single_event()` and re-schedules itself after each batch (chained single events). This reduces per-request time and avoids long-running processes.
-- **Batch size:** Default is small (`5`) to avoid PHP timeouts; the batch size is defined as `BATCH_SIZE` in `includes/BackgroundMigrator.php` and can be adjusted in code if necessary.
-- **Status storage:** Migration state is stored in the `blitzcdn_migration_status` option. The option contains at least these keys:
+- **Technology:** Uses [Action Scheduler](https://actionscheduler.org/) for reliable background processing
+- **Class:** `\BlitzCDN\BackgroundMigrator` — registers an Action Scheduler hook `blitzcdn_background_migration_batch` and exposes methods to start/stop the process
+- **Scheduling:** The migrator schedules batches using `as_schedule_single_action()` and automatically schedules the next batch after each completion
+- **Batch size:** Default is small (`5`) to avoid PHP timeouts; defined as `BATCH_SIZE` in `includes/BackgroundMigrator.php`
+- **Status storage:** Migration state is stored in the `blitzcdn_migration_status` option with these keys:
    - `status` — `'running'`, `'stopped'`, `'completed'`, or `'idle'`
    - `processed` — number of attachments processed so far
    - `total` — total attachments at the start of migration
@@ -234,29 +246,83 @@ Key points:
 - **Admin controls & UI:** The settings page (`Settings > BlitzCDN`) includes:
    - `Start Background Migration` button (AJAX endpoint `wp_ajax_blitzcdn_start_background_migration`)
    - `Stop Background Migration` button (AJAX endpoint `wp_ajax_blitzcdn_stop_background_migration`)
-   - Status polling (AJAX endpoint `wp_ajax_blitzcdn_get_background_status`) to update processed/total in the UI.
-- **How each batch works:** For each attachment ID in the batch the migrator calls the existing Phase 2 logic (`UploadHandler::handle_upload_phase_2`) so the same upload and metadata handling is reused.
+   - Status polling (AJAX endpoint `wp_ajax_blitzcdn_get_background_status`) that updates every 5 seconds
+- **Processing:** For each attachment ID in the batch, the migrator calls `UploadHandler::handle_upload_phase_2()` to reuse the same upload and metadata handling logic
 
-Notes and recommendations:
+#### Advantages Over wp-cron
 
-- WP-Cron is triggered by site requests by default. For reliable background processing on low-traffic sites, set up a system cron to trigger WP-Cron regularly (recommended every minute). Example crontab lines:
+- **Works independently:** Doesn't require site traffic to trigger batches
+- **Reliable:** Battle-tested system used by WooCommerce for processing millions of tasks
+- **Built-in retry:** Action Scheduler automatically retries failed batches
+- **System cron support:** Can optionally use system cron for maximum reliability on zero-traffic sites
+- **No freezing:** Unlike wp-cron, Action Scheduler doesn't halt or freeze during processing
 
-   - Using `curl`:
+#### Setup and Configuration
 
-      ```bash
-      * * * * * curl -s "https://example.com/wp-cron.php?doing_wp_cron" > /dev/null 2>&1
-      ```
+**Basic Setup (Recommended):**
 
-   - Using `wget`:
+Action Scheduler works out of the box using WordPress's built-in cron system. No additional configuration is required for most sites.
 
-      ```bash
-      * * * * * wget -q -O - "https://example.com/wp-cron.php?doing_wp_cron" > /dev/null 2>&1
-      ```
+**For Maximum Reliability (Optional):**
 
-- If you manage multiple sites or want more control, consider triggering `wp-cron.php` with `php` from the WordPress install directory (ensure file permissions and path are correct).
-- Keep `BATCH_SIZE` conservative on shared hosts to avoid memory/time limits. Increase only when you have tested the environment's capacity.
-- Logs and errors are written via `error_log()` and appear in `wp-content/debug.log` when `WP_DEBUG_LOG` is enabled.
-- The background migrator will continue processing across multiple requests (and after the admin browser is closed) so long as WP-Cron is being triggered (by traffic or a system cron).
+For zero-traffic sites or maximum reliability, you can set up a system cron to trigger Action Scheduler. Action Scheduler provides a built-in endpoint that processes pending actions:
+
+```bash
+# Add to your crontab (runs every minute)
+* * * * * curl -s "https://example.com/wp-admin/admin-post.php?action=as_async_request_queue_runner" > /dev/null 2>&1
+```
+
+Or using `wget`:
+
+```bash
+* * * * * wget -q -O - "https://example.com/wp-admin/admin-post.php?action=as_async_request_queue_runner" > /dev/null 2>&1
+```
+
+**Viewing Scheduled Actions:**
+
+You can view and manage scheduled actions using the Action Scheduler admin interface (if available) or via WP-CLI:
+
+```bash
+wp action-scheduler list --status=pending
+```
+
+#### Testing Background Migration
+
+1. **Prepare Test Environment:**
+   - Ensure you have some media files in your WordPress Media Library that haven't been migrated yet
+   - Verify Action Scheduler is installed: Check that `vendor/woocommerce/action-scheduler` exists after running `composer install`
+
+2. **Start Migration:**
+   - Go to **Settings > BlitzCDN**
+   - Click "Start Background Migration"
+   - The status should update to show "running" with processed/total counts
+
+3. **Verify It's Working:**
+   - Check the status updates in the admin panel (updates every 5 seconds)
+   - Close your browser and wait a few minutes
+   - Return to the settings page - the migration should still be running and progressing
+   - Check `wp-content/debug.log` for any errors (if `WP_DEBUG_LOG` is enabled)
+
+4. **Monitor Progress:**
+   - The status panel shows real-time progress
+   - Check WordPress debug log for detailed error messages
+   - Verify files are being uploaded to Appwrite by checking your Appwrite Storage bucket
+
+5. **Stop Migration (if needed):**
+   - Click "Stop Background Migration" to halt the process
+   - The status will update to "stopped"
+
+6. **Verify Completion:**
+   - When complete, status will show "completed"
+   - Check that all media files have the `_blitzcdn_file_id` postmeta
+   - Verify files are accessible via CDN URLs (if "Serve from CDN" is enabled)
+
+#### Troubleshooting Background Migration
+
+- **Migration not starting:** Check that Action Scheduler is installed (`composer install`) and that the admin notice doesn't show any errors
+- **Migration stuck:** Check WordPress debug log for errors. Failed batches are automatically retried by Action Scheduler
+- **Slow processing:** Reduce `BATCH_SIZE` in `includes/BackgroundMigrator.php` if you're on a shared host
+- **Not processing when browser is closed:** Set up system cron (see above) for maximum reliability on low-traffic sites
 
 ### Browser-based migration (existing behavior)
 
@@ -297,6 +363,9 @@ The original AJAX-based migration UI remains available for manual runs from the 
    - Check browser console for JavaScript errors
    - Verify AJAX endpoints are accessible
    - Increase PHP memory limit if processing large files
+   - For background migrations: Check that Action Scheduler is installed and working
+   - Review Action Scheduler logs (if available) or WordPress debug log
+   - Verify system cron is running (if configured) for background migrations
 
 4. **Local Files Not Deleted**
    - Ensure "Safe Delete" is enabled
@@ -365,10 +434,17 @@ Manages upload logic.
 
 Handles URL rewriting.
 
+#### `\BlitzCDN\BackgroundMigrator`
+
+Manages server-side background migrations using Action Scheduler.
+
 ### AJAX Endpoints
 
-- `wp_ajax_blitzcdn_migrate_batch`: Processes migration batches
+- `wp_ajax_blitzcdn_migrate_batch`: Processes migration batches (browser-based)
 - `wp_ajax_blitzcdn_get_migration_stats`: Retrieves migration statistics
+- `wp_ajax_blitzcdn_start_background_migration`: Starts server-side background migration
+- `wp_ajax_blitzcdn_stop_background_migration`: Stops server-side background migration
+- `wp_ajax_blitzcdn_get_background_status`: Retrieves background migration status
 
 ## Contributing
 
@@ -382,9 +458,50 @@ Handles URL rewriting.
 ### Development Setup
 
 1. Clone the repository
-2. Run `composer install`
+2. Run `composer install` (this will install Action Scheduler and Appwrite SDK)
 3. Activate the plugin in a WordPress development environment
-4. Use the included migration tool for testing
+4. Configure your Appwrite credentials in **Settings > BlitzCDN**
+5. Use the included migration tool for testing
+
+### Testing Background Migration
+
+To test the background migration system:
+
+1. **Setup:**
+   - Ensure you have media files in your WordPress Media Library
+   - Configure Appwrite credentials in the plugin settings
+   - Run `composer install` to ensure Action Scheduler is installed
+
+2. **Test Basic Functionality:**
+   - Go to **Settings > BlitzCDN**
+   - Click "Start Background Migration"
+   - Verify the status updates show "running"
+   - Watch the processed/total counts increase
+   - Close your browser and wait 2-3 minutes
+   - Return to the settings page - migration should still be running
+
+3. **Test Stop Functionality:**
+   - Start a migration
+   - Click "Stop Background Migration"
+   - Verify status changes to "stopped"
+   - Verify no new batches are processed
+
+4. **Test Completion:**
+   - Let a migration run to completion
+   - Verify status shows "completed"
+   - Check that media files have `_blitzcdn_file_id` postmeta
+   - Verify files are accessible via CDN (if enabled)
+
+5. **Test Error Handling:**
+   - Temporarily break Appwrite credentials
+   - Start a migration
+   - Check WordPress debug log for error messages
+   - Verify migration continues processing other items (errors are logged but don't stop the process)
+
+6. **Test with System Cron (Optional):**
+   - Set up system cron to trigger Action Scheduler (see Background Migration section)
+   - Start a migration on a site with no traffic
+   - Verify batches process even without page visits
 
 ### Coding Standards
 

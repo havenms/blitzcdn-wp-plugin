@@ -4,15 +4,22 @@ namespace BlitzCDN;
 
 class BackgroundMigrator {
 
-    const CRON_HOOK = 'blitzcdn_background_migration_batch';
+    const ACTION_HOOK = 'blitzcdn_background_migration_batch';
     const OPTION_STATUS = 'blitzcdn_migration_status';
     const BATCH_SIZE = 5; // Keep it small to avoid timeouts
 
     public function __construct() {
-        add_action(self::CRON_HOOK, [$this, 'process_batch']);
+        // Register Action Scheduler hook
+        add_action(self::ACTION_HOOK, [$this, 'process_batch']);
     }
 
     public function start_migration() {
+        // Check if Action Scheduler is available
+        if (!function_exists('as_schedule_single_action')) {
+            error_log('BlitzCDN: Action Scheduler is not available. Please ensure woocommerce/action-scheduler is installed.');
+            return false;
+        }
+
         // Reset status
         update_option(self::OPTION_STATUS, [
             'status' => 'running',
@@ -21,10 +28,13 @@ class BackgroundMigrator {
             'start_time' => time(),
         ]);
 
-        // Schedule first batch
-        if (!wp_next_scheduled(self::CRON_HOOK)) {
-            wp_schedule_single_event(time(), self::CRON_HOOK);
-        }
+        // Clear any existing scheduled actions
+        as_unschedule_all_actions(self::ACTION_HOOK);
+
+        // Schedule first batch immediately
+        as_schedule_single_action(time(), self::ACTION_HOOK);
+        
+        return true;
     }
 
     public function stop_migration() {
@@ -32,17 +42,23 @@ class BackgroundMigrator {
         $status['status'] = 'stopped';
         update_option(self::OPTION_STATUS, $status);
         
-        wp_clear_scheduled_hook(self::CRON_HOOK);
+        // Unschedule all pending actions
+        if (function_exists('as_unschedule_all_actions')) {
+            as_unschedule_all_actions(self::ACTION_HOOK);
+        }
     }
 
     public function get_status() {
         $status = get_option(self::OPTION_STATUS, ['status' => 'idle']);
         
-        // If running, update total in case new images were added or query was cached
+        // If running, check if there are pending actions
         if ($status['status'] === 'running') {
-             // Optional: Recalculate total remaining? 
-             // For progress bar, we need total to be stable or increasing.
-             // Let's just return what we have.
+            // Check if Action Scheduler has any pending actions
+            if (function_exists('as_has_scheduled_action')) {
+                $has_pending = as_has_scheduled_action(self::ACTION_HOOK);
+                // If no pending actions and we haven't completed, something might be wrong
+                // But don't auto-stop, let the user decide
+            }
         }
         
         return $status;
@@ -58,6 +74,7 @@ class BackgroundMigrator {
         $ids = $this->get_batch_ids(self::BATCH_SIZE);
 
         if (empty($ids)) {
+            // Migration complete
             $status['status'] = 'completed';
             $status['completed_time'] = time();
             $status['processed'] = $status['total']; // Ensure 100%
@@ -72,18 +89,26 @@ class BackgroundMigrator {
             if ($metadata) {
                 try {
                     $upload_handler->handle_upload_phase_2($metadata, $id);
+                    // Update processed count on success
+                    $status['processed']++;
                 } catch (\Exception $e) {
                     error_log("BlitzCDN Migration Error (ID $id): " . $e->getMessage());
+                    // Still increment processed to avoid getting stuck on problematic items
+                    $status['processed']++;
                 }
+            } else {
+                // No metadata, skip but count as processed
+                $status['processed']++;
             }
-            // Update processed count
-            $status['processed']++;
         }
 
         update_option(self::OPTION_STATUS, $status);
 
-        // Schedule next batch
-        wp_schedule_single_event(time(), self::CRON_HOOK);
+        // Schedule next batch using Action Scheduler
+        // Use a small delay (1 second) to avoid overwhelming the system
+        if (function_exists('as_schedule_single_action')) {
+            as_schedule_single_action(time() + 1, self::ACTION_HOOK);
+        }
     }
 
     private function get_total_items() {

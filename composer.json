@@ -11,7 +11,8 @@
   ],
   "require": {
     "php": ">=7.4",
-    "appwrite/appwrite": "^10.0"
+    "appwrite/appwrite": "^10.0",
+    "woocommerce/action-scheduler": "^3.7"
   },
   "autoload": {
     "psr-4": {
