@@ -2,7 +2,7 @@ jQuery(document).ready(function ($) {
     var isMigrating = false;
     var totalItems = 0;
     var processedItems = 0;
-    var batchSize = 5;
+    var batchSize = 20;
     var itemIds = [];
 
     $('#blitzcdn-migrate-btn').on('click', function (e) {
@@ -122,13 +122,13 @@ jQuery(document).ready(function ($) {
     function updateBackgroundUI(status) {
         $('#blitzcdn-background-status').show();
         $('#blitzcdn-bg-status-text').text(status.status);
-        
+
         if (status.status === 'running') {
             $('#blitzcdn-background-migrate-btn').hide();
             $('#blitzcdn-stop-background-migrate-btn').show();
             $('#blitzcdn-bg-processed').text(status.processed);
             $('#blitzcdn-bg-total').text(status.total);
-            
+
             if (!bgPollInterval) {
                 bgPollInterval = setInterval(checkBackgroundStatus, 5000);
             }
@@ -136,11 +136,11 @@ jQuery(document).ready(function ($) {
             $('#blitzcdn-background-migrate-btn').show();
             $('#blitzcdn-stop-background-migrate-btn').hide();
             if (status.completed_time) {
-                 $('#blitzcdn-bg-status-text').text('Completed at ' + new Date(status.completed_time * 1000).toLocaleTimeString());
-                 $('#blitzcdn-bg-processed').text(status.processed);
-                 $('#blitzcdn-bg-total').text(status.total);
+                $('#blitzcdn-bg-status-text').text('Completed at ' + new Date(status.completed_time * 1000).toLocaleTimeString());
+                $('#blitzcdn-bg-processed').text(status.processed);
+                $('#blitzcdn-bg-total').text(status.total);
             }
-            
+
             if (bgPollInterval) {
                 clearInterval(bgPollInterval);
                 bgPollInterval = null;
@@ -148,14 +148,14 @@ jQuery(document).ready(function ($) {
         }
     }
 
-    $('#blitzcdn-background-migrate-btn').on('click', function(e) {
+    $('#blitzcdn-background-migrate-btn').on('click', function (e) {
         e.preventDefault();
         if (!confirm('Start background migration? This will run on the server.')) return;
-        
+
         $.post(blitzcdn_migration.ajax_url, {
             action: 'blitzcdn_start_background_migration',
             nonce: blitzcdn_migration.nonce
-        }, function(response) {
+        }, function (response) {
             if (response.success) {
                 checkBackgroundStatus();
             } else {
@@ -164,12 +164,12 @@ jQuery(document).ready(function ($) {
         });
     });
 
-    $('#blitzcdn-stop-background-migrate-btn').on('click', function(e) {
+    $('#blitzcdn-stop-background-migrate-btn').on('click', function (e) {
         e.preventDefault();
         $.post(blitzcdn_migration.ajax_url, {
             action: 'blitzcdn_stop_background_migration',
             nonce: blitzcdn_migration.nonce
-        }, function(response) {
+        }, function (response) {
             checkBackgroundStatus();
         });
     });
