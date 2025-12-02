@@ -3,7 +3,7 @@
         'name' => 'blitzcdn/media-offload',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => 'ac34b104ecee5183da37bed2b97dc1dd1af2a50e',
+        'reference' => '047ba392f8135fe9c98c6a22173cbe47218678f6',
         'type' => 'wordpress-plugin',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
@@ -22,7 +22,7 @@
         'blitzcdn/media-offload' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => 'ac34b104ecee5183da37bed2b97dc1dd1af2a50e',
+            'reference' => '047ba392f8135fe9c98c6a22173cbe47218678f6',
             'type' => 'wordpress-plugin',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),
