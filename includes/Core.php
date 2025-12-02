@@ -13,6 +13,7 @@ class Core {
     private $url_rewriter;
     private $compatibility;
     private $background_migrator;
+    private $redownloader;
 
     public static function get_instance() {
         if (null === self::$instance) {
@@ -43,6 +44,9 @@ class Core {
 
         // Initialize Background Migrator
         $this->background_migrator = new BackgroundMigrator();
+
+        // Initialize Redownloader (Goodbye Procedure)
+        $this->redownloader = new Redownloader($this->appwrite_client);
 
         // Check Action Scheduler availability
         $this->check_action_scheduler();
@@ -108,5 +112,9 @@ class Core {
 
     public function get_background_migrator() {
         return $this->background_migrator;
+    }
+
+    public function get_redownloader() {
+        return $this->redownloader;
     }
 }

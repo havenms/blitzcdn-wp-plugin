@@ -19,6 +19,10 @@ class Migrator {
         add_action('wp_ajax_blitzcdn_stop_background_migration', [$this, 'ajax_stop_background_migration']);
         add_action('wp_ajax_blitzcdn_get_background_status', [$this, 'ajax_get_background_status']);
         add_action('wp_ajax_blitzcdn_manual_batch_execution', [$this, 'ajax_manual_batch_execution']);
+
+        // Goodbye / Redownload Actions
+        add_action('wp_ajax_blitzcdn_get_redownload_stats', [$this, 'ajax_get_redownload_stats']);
+        add_action('wp_ajax_blitzcdn_redownload_batch', [$this, 'ajax_redownload_batch']);
     }
 
     public function enqueue_scripts($hook) {
@@ -148,5 +152,44 @@ class Migrator {
         } else {
             wp_send_json_success($result);
         }
+    }
+
+    /**
+     * AJAX: Get statistics for redownload (goodbye) procedure.
+     */
+    public function ajax_get_redownload_stats() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $redownloader = Core::get_instance()->get_redownloader();
+        $stats = $redownloader->get_redownload_stats();
+
+        wp_send_json_success($stats);
+    }
+
+    /**
+     * AJAX: Process a batch of attachments for redownload.
+     */
+    public function ajax_redownload_batch() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $ids = isset($_POST['ids']) ? array_map('intval', $_POST['ids']) : [];
+        $delete_from_appwrite = isset($_POST['delete_from_appwrite']) && $_POST['delete_from_appwrite'] === 'true';
+
+        if (empty($ids)) {
+            wp_send_json_error('No IDs provided');
+        }
+
+        $redownloader = Core::get_instance()->get_redownloader();
+        $results = $redownloader->process_batch($ids, $delete_from_appwrite);
+
+        wp_send_json_success($results);
     }
 }

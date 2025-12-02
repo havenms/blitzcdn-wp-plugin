@@ -139,6 +139,27 @@ class AppwriteClient {
     }
 
     /**
+     * Download a file from Appwrite Storage.
+     *
+     * @param string $file_id The ID of the file to download.
+     * @return string|false File content on success, false on failure.
+     */
+    public function download_file($file_id) {
+        if (!$this->is_configured) {
+            return false;
+        }
+
+        try {
+            // getFileDownload returns the file content directly
+            $content = $this->storage->getFileDownload($this->bucket_id, $file_id);
+            return $content;
+        } catch (\Throwable $e) {
+            error_log('BlitzCDN Download Error: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
      * Create a document in Appwrite Database.
      *
      * @param array $data Document data.

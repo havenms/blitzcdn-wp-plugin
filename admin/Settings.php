@@ -158,6 +158,83 @@ class Settings {
                     <div id="blitzcdn-migration-log" style="max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 10px; margin-top: 10px;"></div>
                 </div>
             <?php endif; ?>
+            
+            <hr>
+            
+            <h2>👋 Goodbye Procedure</h2>
+            <p>Leaving BlitzCDN? This tool will redownload all your media files from Appwrite back to WordPress, restore local URLs, and optionally clean up files on Appwrite.</p>
+            
+            <?php if (!$is_configured): ?>
+                <div style="background: #fee; border-left: 4px solid #dc3545; padding: 12px; margin: 20px 0; border-radius: 4px;">
+                    <p style="margin: 0; color: #333;">
+                        <strong>🔒 Feature Locked</strong><br>
+                        The goodbye procedure is disabled until you set your Account Email in the settings above.
+                    </p>
+                </div>
+            <?php else: ?>
+                <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 20px 0; border-radius: 4px;">
+                    <p style="margin: 0 0 10px 0; color: #333;">
+                        <strong>⚠️ Important Notes:</strong>
+                    </p>
+                    <ul style="margin: 0; padding-left: 20px; color: #555;">
+                        <li>This process will download all files from Appwrite and store them in your <code>wp-content/uploads</code> folder</li>
+                        <li>Files will be saved to their original paths (where WordPress originally placed them)</li>
+                        <li>If a file already exists locally, it will be skipped (no overwrite)</li>
+                        <li>After successful download, CDN metadata will be cleared so URLs point to local files</li>
+                        <li>Keep this browser tab open until the process completes</li>
+                    </ul>
+                </div>
+                
+                <div style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                    <h3 style="margin-top: 0;">Options</h3>
+                    
+                    <p>
+                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" id="blitzcdn-delete-after-redownload" value="1" style="margin-top: 3px;">
+                            <span>
+                                <strong>Delete files from Appwrite after successful redownload</strong><br>
+                                <span style="color: #666; font-size: 13px;">
+                                    Only deletes files after they have been successfully downloaded and saved locally. 
+                                    If any download fails, files will NOT be deleted from Appwrite for that attachment.
+                                </span>
+                            </span>
+                        </label>
+                    </p>
+                </div>
+                
+                <p>
+                    <button id="blitzcdn-redownload-btn" class="button button-secondary" style="background: #dc3545; border-color: #dc3545; color: #fff;">
+                        🔄 Start Goodbye Procedure
+                    </button>
+                    <button id="blitzcdn-cancel-redownload-btn" class="button button-secondary" style="display: none;">
+                        ⏹️ Cancel
+                    </button>
+                </p>
+                
+                <div id="blitzcdn-redownload-progress" style="margin-top: 20px; display: none;">
+                    <div style="background: #f0f0f1; border: 1px solid #ccc; height: 20px; width: 100%; border-radius: 4px; overflow: hidden;">
+                        <div id="blitzcdn-redownload-progress-bar" style="background: linear-gradient(90deg, #dc3545, #fd7e14); height: 100%; width: 0%; transition: width 0.3s ease;"></div>
+                    </div>
+                    <p id="blitzcdn-redownload-progress-text" style="margin-top: 10px; font-weight: 500;">0%</p>
+                    
+                    <div id="blitzcdn-redownload-stats" style="display: flex; gap: 20px; margin-top: 15px;">
+                        <div style="background: #d4edda; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #155724;" id="blitzcdn-success-count">0</div>
+                            <div style="font-size: 12px; color: #155724;">Success</div>
+                        </div>
+                        <div style="background: #fff3cd; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #856404;" id="blitzcdn-skipped-count">0</div>
+                            <div style="font-size: 12px; color: #856404;">Already Local</div>
+                        </div>
+                        <div style="background: #f8d7da; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #721c24;" id="blitzcdn-error-count">0</div>
+                            <div style="font-size: 12px; color: #721c24;">Errors</div>
+                        </div>
+                    </div>
+                    
+                    <div id="blitzcdn-redownload-log" style="max-height: 300px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; border: 1px solid #333; padding: 15px; margin-top: 15px; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; border-radius: 4px;"></div>
+                </div>
+            <?php endif; ?>
         </div>
         <?php
     }
