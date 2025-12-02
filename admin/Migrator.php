@@ -164,6 +164,17 @@ class Migrator {
             wp_send_json_error('Unauthorized');
         }
 
+        // Verify account is configured
+        $settings = get_option('blitzcdn_settings', []);
+        if (empty($settings['account_email'])) {
+            wp_send_json_error('Account email not configured. Please set your email in BlitzCDN settings.');
+        }
+
+        // Verify Appwrite client is configured
+        if (!$this->appwrite_client->is_configured()) {
+            wp_send_json_error('Appwrite is not configured. Please check your environment settings.');
+        }
+
         $redownloader = Core::get_instance()->get_redownloader();
         $stats = $redownloader->get_redownload_stats();
 
@@ -178,6 +189,17 @@ class Migrator {
 
         if (!current_user_can('manage_options')) {
             wp_send_json_error('Unauthorized');
+        }
+
+        // Verify account is configured
+        $settings = get_option('blitzcdn_settings', []);
+        if (empty($settings['account_email'])) {
+            wp_send_json_error('Account email not configured. Please set your email in BlitzCDN settings.');
+        }
+
+        // Verify Appwrite client is configured
+        if (!$this->appwrite_client->is_configured()) {
+            wp_send_json_error('Appwrite is not configured. Please check your environment settings.');
         }
 
         $ids = isset($_POST['ids']) ? array_map('intval', $_POST['ids']) : [];

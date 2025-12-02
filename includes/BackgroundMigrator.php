@@ -42,14 +42,18 @@ class BackgroundMigrator {
     }
 
     public function stop_migration() {
+        // Update status FIRST before unscheduling
         $status = get_option(self::OPTION_STATUS, []);
         $status['status'] = 'stopped';
+        $status['stopped_time'] = time();
         update_option(self::OPTION_STATUS, $status);
         
         // Unschedule all pending actions
         if (function_exists('as_unschedule_all_actions')) {
             as_unschedule_all_actions(self::ACTION_HOOK);
         }
+        
+        return true;
     }
 
     public function get_status() {
@@ -108,12 +112,17 @@ class BackgroundMigrator {
 
         update_option(self::OPTION_STATUS, $status);
 
+        // Re-check status before scheduling next batch (in case stop was called during processing)
+        $current_status = get_option(self::OPTION_STATUS, []);
+        if ($current_status['status'] !== 'running') {
+            // Migration was stopped during this batch, don't schedule next
+            return;
+        }
+
         // Schedule next batch using Action Scheduler
         // Use a small delay (1 second) to avoid overwhelming the system
         if (function_exists('as_schedule_single_action')) {
             as_schedule_single_action(time() + 1, self::ACTION_HOOK);
-            // Also trigger the queue runner to ensure it runs
-            do_action('action_scheduler_run');
         }
     }
 
