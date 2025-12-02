@@ -18,6 +18,7 @@ class Migrator {
         add_action('wp_ajax_blitzcdn_start_background_migration', [$this, 'ajax_start_background_migration']);
         add_action('wp_ajax_blitzcdn_stop_background_migration', [$this, 'ajax_stop_background_migration']);
         add_action('wp_ajax_blitzcdn_get_background_status', [$this, 'ajax_get_background_status']);
+        add_action('wp_ajax_blitzcdn_manual_batch_execution', [$this, 'ajax_manual_batch_execution']);
     }
 
     public function enqueue_scripts($hook) {
@@ -134,5 +135,18 @@ class Migrator {
 
         $status = Core::get_instance()->get_background_migrator()->get_status();
         wp_send_json_success($status);
+    }
+
+    public function ajax_manual_batch_execution() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+        if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
+
+        $result = Core::get_instance()->get_background_migrator()->manual_execute_batch();
+        
+        if (isset($result['error'])) {
+            wp_send_json_error($result);
+        } else {
+            wp_send_json_success($result);
+        }
     }
 }

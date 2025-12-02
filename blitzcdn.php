@@ -38,6 +38,11 @@ function blitzcdn_init() {
 }
 add_action('plugins_loaded', 'blitzcdn_init');
 
+// Load CLI commands if WP-CLI is available
+if (defined('WP_CLI') && WP_CLI) {
+    require_once BLITZCDN_PATH . 'includes/CLI.php';
+}
+
 // Activation Hook
 register_activation_hook(__FILE__, ['\BlitzCDN\Core', 'activate']);
 

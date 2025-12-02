@@ -61,6 +61,11 @@ class Core {
         
         if (file_exists($action_scheduler_path) && !class_exists('ActionScheduler', false)) {
             require_once $action_scheduler_path;
+            
+            // Initialize Action Scheduler if it has an initialization function
+            if (function_exists('action_scheduler_init')) {
+                action_scheduler_init();
+            }
         }
     }
 

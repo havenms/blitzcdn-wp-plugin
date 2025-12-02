@@ -34,6 +34,10 @@ class BackgroundMigrator {
         // Schedule first batch immediately
         as_schedule_single_action(time(), self::ACTION_HOOK);
         
+        // Force Action Scheduler to process immediately
+        // This helps if WP-Cron is not working properly
+        do_action('action_scheduler_run');
+        
         return true;
     }
 
@@ -108,7 +112,33 @@ class BackgroundMigrator {
         // Use a small delay (1 second) to avoid overwhelming the system
         if (function_exists('as_schedule_single_action')) {
             as_schedule_single_action(time() + 1, self::ACTION_HOOK);
+            // Also trigger the queue runner to ensure it runs
+            do_action('action_scheduler_run');
         }
+    }
+
+    /**
+     * Manual execution trigger - call this via direct HTTP request or WP-CLI
+     * Useful when WP-Cron loopback requests are not working
+     */
+    public function manual_execute_batch() {
+        $status = $this->get_status();
+        
+        if ($status['status'] !== 'running') {
+            return ['error' => 'Migration is not running'];
+        }
+
+        // Process one batch
+        $this->process_batch();
+        
+        $updated_status = $this->get_status();
+        return [
+            'success' => true,
+            'processed' => $updated_status['processed'],
+            'total' => $updated_status['total'],
+            'percentage' => $updated_status['total'] > 0 ? round(($updated_status['processed'] / $updated_status['total']) * 100, 2) : 0,
+            'status' => $updated_status['status']
+        ];
     }
 
     private function get_total_items() {
