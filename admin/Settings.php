@@ -161,7 +161,7 @@ class Settings {
             
             <hr>
             
-            <h2>👋 Goodbye Procedure</h2>
+            <h2>Goodbye Procedure</h2>
             <p>Leaving BlitzCDN? This tool will redownload all your media files from Appwrite back to WordPress, restore local URLs, and optionally clean up files on Appwrite.</p>
             
             <?php if (!$is_configured): ?>
@@ -174,7 +174,7 @@ class Settings {
             <?php else: ?>
                 <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 20px 0; border-radius: 4px;">
                     <p style="margin: 0 0 10px 0; color: #333;">
-                        <strong>⚠️ Important Notes:</strong>
+                        <strong>Important Notes:</strong>
                     </p>
                     <ul style="margin: 0; padding-left: 20px; color: #555;">
                         <li>This process will download all files from Appwrite and store them in your <code>wp-content/uploads</code> folder</li>
@@ -204,10 +204,10 @@ class Settings {
                 
                 <p>
                     <button id="blitzcdn-redownload-btn" class="button button-secondary" style="background: #dc3545; border-color: #dc3545; color: #fff;">
-                        🔄 Start Goodbye Procedure
+                        Start Goodbye Procedure
                     </button>
                     <button id="blitzcdn-cancel-redownload-btn" class="button button-secondary" style="display: none;">
-                        ⏹️ Cancel
+                        Cancel
                     </button>
                 </p>
                 
@@ -220,7 +220,7 @@ class Settings {
                     <div id="blitzcdn-redownload-stats" style="display: flex; gap: 20px; margin-top: 15px;">
                         <div style="background: #d4edda; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
                             <div style="font-size: 24px; font-weight: bold; color: #155724;" id="blitzcdn-success-count">0</div>
-                            <div style="font-size: 12px; color: #155724;">Success</div>
+                            <div style="font-size: 12px; color: #155724;">Downloaded</div>
                         </div>
                         <div style="background: #fff3cd; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
                             <div style="font-size: 24px; font-weight: bold; color: #856404;" id="blitzcdn-skipped-count">0</div>

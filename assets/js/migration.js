@@ -227,7 +227,7 @@ jQuery(document).ready(function ($) {
 
         if (confirm('Are you sure you want to cancel the Goodbye Procedure?\n\nFiles already processed will remain in their current state.')) {
             redownloadCancelled = true;
-            redownloadLog('⏹️ Cancellation requested. Stopping after current batch...', 'warning');
+            redownloadLog('Cancellation requested. Stopping after current batch...', 'warning');
         }
     });
 
@@ -247,9 +247,9 @@ jQuery(document).ready(function ($) {
         updateRedownloadStats();
         $('#blitzcdn-redownload-log').empty();
         
-        redownloadLog('🚀 Starting Goodbye Procedure...', 'info');
+        redownloadLog('Starting Goodbye Procedure...', 'info');
         if (deleteFromAppwrite) {
-            redownloadLog('⚠️ Delete from Appwrite is ENABLED - files will be removed after download', 'warning');
+            redownloadLog('Delete from Appwrite is ENABLED - files will be removed after download', 'warning');
         }
 
         // Get stats
@@ -262,19 +262,19 @@ jQuery(document).ready(function ($) {
                 redownloadItemIds = response.data.ids.slice(); // Clone array
 
                 if (redownloadTotalItems === 0) {
-                    redownloadLog('✅ No items found with BlitzCDN metadata. Nothing to redownload!', 'success');
+                    redownloadLog('No items found with BlitzCDN metadata. Nothing to redownload.', 'success');
                     finishRedownload();
                     return;
                 }
 
-                redownloadLog('📊 Found ' + redownloadTotalItems + ' attachments to process', 'info');
+                redownloadLog('Found ' + redownloadTotalItems + ' attachments to process', 'info');
                 processRedownloadBatch(deleteFromAppwrite);
             } else {
-                redownloadLog('❌ Error fetching stats: ' + (response.data || 'Unknown error'), 'error');
+                redownloadLog('Error fetching stats: ' + (response.data || 'Unknown error'), 'error');
                 finishRedownload();
             }
         }).fail(function (xhr, status, error) {
-            redownloadLog('❌ Network error fetching stats: ' + error, 'error');
+            redownloadLog('Network error fetching stats: ' + error, 'error');
             finishRedownload();
         });
     }
@@ -282,7 +282,7 @@ jQuery(document).ready(function ($) {
     function processRedownloadBatch(deleteFromAppwrite) {
         // Check for cancellation
         if (redownloadCancelled) {
-            redownloadLog('⏹️ Process cancelled by user', 'warning');
+            redownloadLog('Process cancelled by user', 'warning');
             finishRedownload();
             return;
         }
@@ -293,7 +293,7 @@ jQuery(document).ready(function ($) {
         }
 
         var batch = redownloadItemIds.splice(0, redownloadBatchSize);
-        redownloadLog('📦 Processing batch of ' + batch.length + ' items...', 'info');
+        redownloadLog('Processing batch of ' + batch.length + ' items...', 'info');
 
         $.post(blitzcdn_migration.ajax_url, {
             action: 'blitzcdn_redownload_batch',
@@ -308,30 +308,33 @@ jQuery(document).ready(function ($) {
                 $.each(response.data, function (id, result) {
                     var attachmentLink = '<a href="' + window.location.origin + '/wp-admin/post.php?post=' + id + '&action=edit" target="_blank">#' + id + '</a>';
                     
+                    // Check if original file already existed locally
+                    var originalAlreadyExists = result.details && result.details.original && result.details.original.status === 'exists';
+                    
                     if (result.status === 'success') {
-                        redownloadStats.success++;
-                        var msg = '✅ ' + attachmentLink + ': ' + result.message;
-                        if (result.details && result.details.deleted_from_appwrite) {
-                            msg += ' (Deleted ' + result.details.deleted_count + ' files from Appwrite)';
+                        if (originalAlreadyExists) {
+                            // File was already local - count as skipped, not success
+                            redownloadStats.skipped++;
+                            redownloadLog(attachmentLink + ': Already exists locally (metadata cleared)', 'info');
+                        } else {
+                            redownloadStats.success++;
+                            var msg = attachmentLink + ': ' + result.message;
+                            if (result.details && result.details.deleted_from_appwrite) {
+                                msg += ' (Deleted ' + result.details.deleted_count + ' from Appwrite)';
+                            }
+                            redownloadLog(msg, 'success');
                         }
-                        redownloadLog(msg, 'success');
                     } else if (result.status === 'partial') {
                         redownloadStats.errors++;
-                        redownloadLog('⚠️ ' + attachmentLink + ': ' + result.message, 'warning');
+                        redownloadLog(attachmentLink + ': ' + result.message, 'warning');
                         logDetailedResults(id, result.details);
                     } else if (result.status === 'error') {
                         redownloadStats.errors++;
-                        redownloadLog('❌ ' + attachmentLink + ': ' + result.message, 'error');
-                    }
-                    
-                    // Check for files that already existed
-                    if (result.details && result.details.original && result.details.original.status === 'exists') {
-                        redownloadStats.skipped++;
-                        redownloadStats.success--; // Adjust count
+                        redownloadLog(attachmentLink + ': ' + result.message, 'error');
                     }
                 });
             } else {
-                redownloadLog('❌ Batch failed: ' + (response.data || 'Unknown error'), 'error');
+                redownloadLog('Batch failed: ' + (response.data || 'Unknown error'), 'error');
                 redownloadStats.errors += batch.length;
             }
 
@@ -343,7 +346,7 @@ jQuery(document).ready(function ($) {
             }, 100);
 
         }).fail(function (xhr, status, error) {
-            redownloadLog('❌ Network error processing batch: ' + error, 'error');
+            redownloadLog('Network error processing batch: ' + error, 'error');
             redownloadStats.errors += batch.length;
             updateRedownloadStats();
             
@@ -364,18 +367,18 @@ jQuery(document).ready(function ($) {
             var origStatus = details.original.status;
             var origMsg = details.original.message || '';
             if (origStatus === 'error') {
-                redownloadLog('   └─ Original: ❌ ' + origMsg, 'error');
+                redownloadLog('   Original: ' + origMsg, 'error');
             } else if (origStatus === 'exists') {
-                redownloadLog('   └─ Original: ⏭️ ' + origMsg, 'info');
+                redownloadLog('   Original: ' + origMsg, 'info');
             }
         }
 
         if (details.sizes && typeof details.sizes === 'object') {
             $.each(details.sizes, function(sizeName, sizeResult) {
                 if (sizeResult.status === 'error') {
-                    redownloadLog('   └─ Size "' + sizeName + '": ❌ ' + (sizeResult.message || ''), 'error');
+                    redownloadLog('   Size "' + sizeName + '": ' + (sizeResult.message || ''), 'error');
                 } else if (sizeResult.status === 'skipped') {
-                    redownloadLog('   └─ Size "' + sizeName + '": ⏭️ ' + (sizeResult.message || ''), 'info');
+                    redownloadLog('   Size "' + sizeName + '": ' + (sizeResult.message || ''), 'info');
                 }
             });
         }
@@ -405,31 +408,31 @@ jQuery(document).ready(function ($) {
 
         // Final summary
         redownloadLog('', 'info'); // Empty line
-        redownloadLog('═══════════════════════════════════════', 'info');
-        redownloadLog('📋 GOODBYE PROCEDURE COMPLETE', 'info');
-        redownloadLog('═══════════════════════════════════════', 'info');
-        redownloadLog('✅ Success: ' + redownloadStats.success + ' attachments', 'success');
-        redownloadLog('⏭️ Already Local: ' + redownloadStats.skipped + ' attachments', 'info');
-        redownloadLog('❌ Errors: ' + redownloadStats.errors + ' attachments', redownloadStats.errors > 0 ? 'error' : 'info');
+        redownloadLog('----------------------------------------', 'info');
+        redownloadLog('GOODBYE PROCEDURE COMPLETE', 'info');
+        redownloadLog('----------------------------------------', 'info');
+        redownloadLog('Downloaded: ' + redownloadStats.success + ' attachments', 'success');
+        redownloadLog('Already Local: ' + redownloadStats.skipped + ' attachments', 'info');
+        redownloadLog('Errors: ' + redownloadStats.errors + ' attachments', redownloadStats.errors > 0 ? 'error' : 'info');
 
         if (redownloadStats.errors > 0) {
             redownloadLog('', 'info');
-            redownloadLog('⚠️ Some files had errors. Review the log above and try again for failed items.', 'warning');
+            redownloadLog('Some files had errors. Review the log above and try again for failed items.', 'warning');
         }
 
         if (redownloadCancelled) {
             redownloadLog('', 'info');
-            redownloadLog('⏹️ Process was cancelled. Some items may not have been processed.', 'warning');
+            redownloadLog('Process was cancelled. Some items may not have been processed.', 'warning');
         }
 
         // Show completion alert
         var alertMessage = 'Goodbye Procedure Complete!\n\n';
-        alertMessage += '✅ Success: ' + redownloadStats.success + '\n';
-        alertMessage += '⏭️ Already Local: ' + redownloadStats.skipped + '\n';
-        alertMessage += '❌ Errors: ' + redownloadStats.errors;
+        alertMessage += 'Downloaded: ' + redownloadStats.success + '\n';
+        alertMessage += 'Already Local: ' + redownloadStats.skipped + '\n';
+        alertMessage += 'Errors: ' + redownloadStats.errors;
         
         if (redownloadStats.errors > 0) {
-            alertMessage += '\n\n⚠️ Some files had errors. Check the log for details.';
+            alertMessage += '\n\nSome files had errors. Check the log for details.';
         }
 
         alert(alertMessage);
