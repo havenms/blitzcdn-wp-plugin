@@ -140,9 +140,9 @@ class Settings {
                 <p style="color: #28a745; font-weight: 500;">✓ Account email configured: <code><?php echo esc_html($account_email); ?></code></p>
                 <p>Migrate existing media to Appwrite.</p>
                 <p>
-                    <button id="blitzcdn-migrate-btn" class="button button-secondary">Migrate Existing Media (Browser)</button>
-                    <button id="blitzcdn-background-migrate-btn" class="button button-primary">Start Background Migration</button>
-                    <button id="blitzcdn-stop-background-migrate-btn" class="button button-secondary" style="display:none;">Stop Background Migration</button>
+                    <button type="button" id="blitzcdn-migrate-btn" class="button button-secondary" data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>" data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">Migrate Existing Media (Browser)</button>
+                    <button type="button" id="blitzcdn-background-migrate-btn" class="button button-primary" data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>" data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">Start Background Migration</button>
+                    <button type="button" id="blitzcdn-stop-background-migrate-btn" class="button button-secondary" style="display:none;" data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>" data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">Stop Background Migration</button>
                 </p>
                 
                 <div id="blitzcdn-background-status" style="margin-top: 10px; display: none; padding: 10px; background: #fff; border: 1px solid #ccd0d4;">
@@ -203,10 +203,10 @@ class Settings {
                 </div>
                 
                 <p>
-                    <button id="blitzcdn-redownload-btn" class="button button-secondary" style="background: #dc3545; border-color: #dc3545; color: #fff;">
+                    <button type="button" id="blitzcdn-redownload-btn" class="button button-secondary" style="background: #dc3545; border-color: #dc3545; color: #fff;" data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>" data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">
                         Start Goodbye Procedure
                     </button>
-                    <button id="blitzcdn-cancel-redownload-btn" class="button button-secondary" style="display: none;">
+                    <button type="button" id="blitzcdn-cancel-redownload-btn" class="button button-secondary" style="display: none;">
                         Cancel
                     </button>
                 </p>

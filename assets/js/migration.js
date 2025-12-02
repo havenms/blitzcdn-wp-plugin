@@ -1,4 +1,43 @@
-jQuery(document).ready(function ($) {
+/* eslint-disable no-console */
+console.debug('BlitzCDN migration script loaded');
+
+if (typeof jQuery === 'undefined') {
+    console.error('BlitzCDN: jQuery is required for the migration script but not found.');
+} else {
+    jQuery(document).ready(function ($) {
+    // Fallbacks if localization failed
+    var _ajax_url = (typeof blitzcdn_migration !== 'undefined' && blitzcdn_migration.ajax_url) ? blitzcdn_migration.ajax_url : null;
+    var _nonce = (typeof blitzcdn_migration !== 'undefined' && blitzcdn_migration.nonce) ? blitzcdn_migration.nonce : null;
+    // Try to read from button data attributes as a fallback
+    if (!_ajax_url) {
+        var elButton = document.querySelector('#blitzcdn-redownload-btn') || document.querySelector('#blitzcdn-migrate-btn') || document.querySelector('#blitzcdn-background-migrate-btn');
+        if (elButton && elButton.dataset && elButton.dataset.ajaxUrl) {
+            _ajax_url = elButton.dataset.ajaxUrl;
+        }
+    }
+    if (!_nonce) {
+        var elNonceBtn = document.querySelector('#blitzcdn-redownload-btn') || document.querySelector('#blitzcdn-migrate-btn');
+        if (elNonceBtn && elNonceBtn.dataset && elNonceBtn.dataset.nonce) {
+            _nonce = elNonceBtn.dataset.nonce;
+        }
+    }
+
+    // Helper for making AJAX posts with fallback
+    function ajaxPost(payload, successCallback, errorCallback) {
+        if (!_ajax_url || !_nonce) {
+            console.error('BlitzCDN: Missing ajax_url or nonce; cannot make AJAX call.');
+            if (typeof errorCallback === 'function') errorCallback({error: 'Missing ajax_url or nonce'});
+            return;
+        }
+
+        payload.nonce = payload.nonce || _nonce;
+
+        $.post(_ajax_url, payload, function(response) {
+            if (typeof successCallback === 'function') successCallback(response);
+        }).fail(function(xhr, status, err) {
+            if (typeof errorCallback === 'function') errorCallback(xhr, status, err);
+        });
+    }
     // ============================================
     // MIGRATION (Upload to CDN) Logic
     // ============================================
@@ -8,7 +47,7 @@ jQuery(document).ready(function ($) {
     var batchSize = 20;
     var itemIds = [];
 
-    $('#blitzcdn-migrate-btn').on('click', function (e) {
+    $(document).on('click', '#blitzcdn-migrate-btn', function (e) {
         e.preventDefault();
         if (isMigrating) return;
 
@@ -26,9 +65,8 @@ jQuery(document).ready(function ($) {
         log('Starting migration...');
 
         // Get stats
-        $.post(blitzcdn_migration.ajax_url, {
-            action: 'blitzcdn_get_migration_stats',
-            nonce: blitzcdn_migration.nonce
+        ajaxPost({
+            action: 'blitzcdn_get_migration_stats'
         }, function (response) {
             if (response.success) {
                 totalItems = response.data.total;
@@ -56,9 +94,8 @@ jQuery(document).ready(function ($) {
 
         var batch = itemIds.splice(0, batchSize);
 
-        $.post(blitzcdn_migration.ajax_url, {
+        ajaxPost({
             action: 'blitzcdn_migrate_batch',
-            nonce: blitzcdn_migration.nonce,
             ids: batch
         }, function (response) {
             processedItems += batch.length;
@@ -113,9 +150,8 @@ jQuery(document).ready(function ($) {
     var bgPollInterval;
 
     function checkBackgroundStatus() {
-        $.post(blitzcdn_migration.ajax_url, {
-            action: 'blitzcdn_get_background_status',
-            nonce: blitzcdn_migration.nonce
+        ajaxPost({
+            action: 'blitzcdn_get_background_status'
         }, function (response) {
             if (response.success) {
                 var status = response.data;
@@ -153,13 +189,12 @@ jQuery(document).ready(function ($) {
         }
     }
 
-    $('#blitzcdn-background-migrate-btn').on('click', function (e) {
+    $(document).on('click', '#blitzcdn-background-migrate-btn', function (e) {
         e.preventDefault();
         if (!confirm('Start background migration? This will run on the server.')) return;
 
-        $.post(blitzcdn_migration.ajax_url, {
-            action: 'blitzcdn_start_background_migration',
-            nonce: blitzcdn_migration.nonce
+        ajaxPost({
+            action: 'blitzcdn_start_background_migration'
         }, function (response) {
             if (response.success) {
                 checkBackgroundStatus();
@@ -169,11 +204,10 @@ jQuery(document).ready(function ($) {
         });
     });
 
-    $('#blitzcdn-stop-background-migrate-btn').on('click', function (e) {
+    $(document).on('click', '#blitzcdn-stop-background-migrate-btn', function (e) {
         e.preventDefault();
-        $.post(blitzcdn_migration.ajax_url, {
-            action: 'blitzcdn_stop_background_migration',
-            nonce: blitzcdn_migration.nonce
+        ajaxPost({
+            action: 'blitzcdn_stop_background_migration'
         }, function (response) {
             checkBackgroundStatus();
         });
@@ -197,7 +231,7 @@ jQuery(document).ready(function ($) {
         errors: 0
     };
 
-    $('#blitzcdn-redownload-btn').on('click', function (e) {
+    $(document).on('click', '#blitzcdn-redownload-btn', function (e) {
         e.preventDefault();
         if (isRedownloading) return;
 
@@ -221,7 +255,7 @@ jQuery(document).ready(function ($) {
         startRedownload(deleteFromAppwrite);
     });
 
-    $('#blitzcdn-cancel-redownload-btn').on('click', function (e) {
+    $(document).on('click', '#blitzcdn-cancel-redownload-btn', function (e) {
         e.preventDefault();
         if (!isRedownloading) return;
 
@@ -253,9 +287,8 @@ jQuery(document).ready(function ($) {
         }
 
         // Get stats
-        $.post(blitzcdn_migration.ajax_url, {
-            action: 'blitzcdn_get_redownload_stats',
-            nonce: blitzcdn_migration.nonce
+        ajaxPost({
+            action: 'blitzcdn_get_redownload_stats'
         }, function (response) {
             if (response.success) {
                 redownloadTotalItems = response.data.total;
@@ -295,9 +328,8 @@ jQuery(document).ready(function ($) {
         var batch = redownloadItemIds.splice(0, redownloadBatchSize);
         redownloadLog('Processing batch of ' + batch.length + ' items...', 'info');
 
-        $.post(blitzcdn_migration.ajax_url, {
+        ajaxPost({
             action: 'blitzcdn_redownload_batch',
-            nonce: blitzcdn_migration.nonce,
             ids: batch,
             delete_from_appwrite: deleteFromAppwrite ? 'true' : 'false'
         }, function (response) {
@@ -472,3 +504,4 @@ jQuery(document).ready(function ($) {
         }
     }
 });
+}

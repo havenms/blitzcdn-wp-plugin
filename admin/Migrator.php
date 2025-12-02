@@ -26,7 +26,9 @@ class Migrator {
     }
 
     public function enqueue_scripts($hook) {
-        if ($hook !== 'settings_page_blitzcdn') {
+        // Enqueue on any admin page that contains 'blitzcdn' in the hook name.
+        // This helps in setups where the admin page hook varies (multisite, plugin placement, etc.).
+        if (false === strpos($hook, 'blitzcdn')) {
             return;
         }
 
@@ -121,6 +123,11 @@ class Migrator {
             wp_send_json_error('Account email not configured. Please set your email in BlitzCDN settings.');
         }
 
+        // Log who is starting the migration for audit/debugging (helps debug auto-start cases)
+        $current_user = wp_get_current_user();
+        $remote_ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
+        error_log(sprintf('BlitzCDN: ajax_start_background_migration called by %s (%s)', $current_user->user_login, $remote_ip));
+
         Core::get_instance()->get_background_migrator()->start_migration();
         wp_send_json_success();
     }
@@ -128,6 +135,10 @@ class Migrator {
     public function ajax_stop_background_migration() {
         check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
         if (!current_user_can('manage_options')) wp_send_json_error('Unauthorized');
+
+        $current_user = wp_get_current_user();
+        $remote_ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
+        error_log(sprintf('BlitzCDN: ajax_stop_background_migration called by %s (%s)', $current_user->user_login, $remote_ip));
 
         Core::get_instance()->get_background_migrator()->stop_migration();
         wp_send_json_success();
@@ -175,6 +186,10 @@ class Migrator {
             wp_send_json_error('Appwrite is not configured. Please check your environment settings.');
         }
 
+        $current_user = wp_get_current_user();
+        $remote_ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
+        error_log(sprintf('BlitzCDN: ajax_get_redownload_stats called by %s (%s)', $current_user->user_login, $remote_ip));
+
         $redownloader = Core::get_instance()->get_redownloader();
         $stats = $redownloader->get_redownload_stats();
 
@@ -208,6 +223,10 @@ class Migrator {
         if (empty($ids)) {
             wp_send_json_error('No IDs provided');
         }
+
+        $current_user = wp_get_current_user();
+        $remote_ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
+        error_log(sprintf('BlitzCDN: ajax_redownload_batch called by %s (%s) ids=%s delete=%s', $current_user->user_login, $remote_ip, implode(',', $ids), $delete_from_appwrite ? '1' : '0'));
 
         $redownloader = Core::get_instance()->get_redownloader();
         $results = $redownloader->process_batch($ids, $delete_from_appwrite);
