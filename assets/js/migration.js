@@ -33,8 +33,10 @@ if (typeof jQuery === 'undefined') {
         payload.nonce = payload.nonce || _nonce;
 
         $.post(_ajax_url, payload, function(response) {
+            console.debug('BlitzCDN AJAX success for action=' + payload.action, response);
             if (typeof successCallback === 'function') successCallback(response);
         }).fail(function(xhr, status, err) {
+            console.error('BlitzCDN AJAX error for action=' + payload.action + ':', status, err, xhr);
             if (typeof errorCallback === 'function') errorCallback(xhr, status, err);
         });
     }
@@ -232,8 +234,12 @@ if (typeof jQuery === 'undefined') {
     };
 
     $(document).on('click', '#blitzcdn-redownload-btn', function (e) {
+        console.debug('BlitzCDN: Redownload button clicked');
         e.preventDefault();
-        if (isRedownloading) return;
+        if (isRedownloading) {
+            console.warn('BlitzCDN: Redownload already in progress, ignoring click');
+            return;
+        }
 
         var deleteFromAppwrite = $('#blitzcdn-delete-after-redownload').is(':checked');
         var warningMessage = 'Are you sure you want to start the Goodbye Procedure?\n\n';
@@ -243,15 +249,18 @@ if (typeof jQuery === 'undefined') {
         
         if (deleteFromAppwrite) {
             warningMessage += '• DELETE files from Appwrite after successful download\n';
-            warningMessage += '\n⚠️ WARNING: Files will be permanently deleted from Appwrite!';
+            warningMessage += '\nWARNING: Files will be permanently deleted from Appwrite!';
         }
         
         warningMessage += '\n\nThis process may take a while. Keep this tab open.';
 
+        console.debug('BlitzCDN: Showing confirmation dialog');
         if (!confirm(warningMessage)) {
+            console.debug('BlitzCDN: User cancelled the procedure');
             return;
         }
 
+        console.debug('BlitzCDN: User confirmed, starting redownload procedure');
         startRedownload(deleteFromAppwrite);
     });
 
@@ -287,9 +296,11 @@ if (typeof jQuery === 'undefined') {
         }
 
         // Get stats
+        console.debug('BlitzCDN: Fetching redownload stats...');
         ajaxPost({
             action: 'blitzcdn_get_redownload_stats'
         }, function (response) {
+            console.debug('BlitzCDN: Redownload stats response:', response);
             if (response.success) {
                 redownloadTotalItems = response.data.total;
                 redownloadItemIds = response.data.ids.slice(); // Clone array
@@ -303,10 +314,12 @@ if (typeof jQuery === 'undefined') {
                 redownloadLog('Found ' + redownloadTotalItems + ' attachments to process', 'info');
                 processRedownloadBatch(deleteFromAppwrite);
             } else {
+                console.error('BlitzCDN: Failed to get redownload stats:', response);
                 redownloadLog('Error fetching stats: ' + (response.data || 'Unknown error'), 'error');
                 finishRedownload();
             }
-        }).fail(function (xhr, status, error) {
+        }, function (xhr, status, error) {
+            console.error('BlitzCDN: Network error fetching stats:', error);
             redownloadLog('Network error fetching stats: ' + error, 'error');
             finishRedownload();
         });
