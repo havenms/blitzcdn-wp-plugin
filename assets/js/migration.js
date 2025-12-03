@@ -211,10 +211,10 @@ if (typeof jQuery === 'undefined') {
         }
 
         function updateBackgroundUI(status) {
-            $('#blitzcdn-background-status').show();
             $('#blitzcdn-bg-status-text').text(status.status);
 
             if (status.status === 'running') {
+                $('#blitzcdn-background-status').show();
                 $('#blitzcdn-background-migrate-btn').hide();
                 $('#blitzcdn-stop-background-migrate-btn').show();
                 $('#blitzcdn-bg-processed').text(status.processed);
@@ -224,6 +224,7 @@ if (typeof jQuery === 'undefined') {
                     bgPollInterval = setInterval(checkBackgroundStatus, 1000); // Poll every 1 second for better reactivity
                 }
             } else {
+                $('#blitzcdn-background-status').hide(); // Hide when not running
                 $('#blitzcdn-background-migrate-btn').show();
                 $('#blitzcdn-stop-background-migrate-btn').hide();
                 if (status.completed_time) {
