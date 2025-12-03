@@ -186,6 +186,48 @@ class UploadHandler {
             update_post_meta($attachment_id, '_blitzcdn_sizes', $blitz_sizes);
         }
 
+        // Rewrite URLs in post content if all uploads succeeded
+        if ($all_uploads_successful) {
+            // Get CDN URLs that were just stored
+            $cdn_url = get_post_meta($attachment_id, '_blitzcdn_cdn_url', true);
+            
+            // Build URL mapping: Local URL => CDN URL (inverse of Redownloader)
+            $url_replacements = [];
+            
+            // Construct local URL
+            $upload_dir = wp_upload_dir();
+            $base_url = trailingslashit($upload_dir['baseurl']);
+            // _wp_attached_file is relative to uploads directory, e.g., "2024/01/image.jpg"
+            $local_url = $base_url . ltrim($file, '/');
+            
+            // Original file URL replacement
+            if ($cdn_url && $local_url && $cdn_url !== $local_url) {
+                $url_replacements[$local_url] = $cdn_url;
+            }
+            
+            // Size URLs replacement
+            if (is_array($blitz_sizes) && !empty($blitz_sizes)) {
+                foreach ($blitz_sizes as $size_name => $size_info) {
+                    if (!empty($size_info['url']) && isset($metadata['sizes'][$size_name]['file'])) {
+                        $size_filename = $metadata['sizes'][$size_name]['file'];
+                        // Construct local size URL: baseurl/subdir/filename
+                        $size_path = ($subdir === '.' ? '' : $subdir . '/') . $size_filename;
+                        $local_size_url = $base_url . ltrim($size_path, '/');
+                        $cdn_size_url = $size_info['url'];
+                        
+                        if ($local_size_url && $cdn_size_url !== $local_size_url) {
+                            $url_replacements[$local_size_url] = $cdn_size_url;
+                        }
+                    }
+                }
+            }
+            
+            // Perform URL rewriting in all post content
+            if (!empty($url_replacements)) {
+                $this->rewrite_urls_in_content($url_replacements);
+            }
+        }
+
         // Safe Delete Logic
         $settings = get_option('blitzcdn_settings', []);
         $safe_delete = $settings['safe_delete'] ?? false;
@@ -263,6 +305,148 @@ class UploadHandler {
                 }
             }
         }
+    }
+
+    /**
+     * Rewrite local URLs to CDN URLs in all post content across the site.
+     * This is the inverse of Redownloader::rewrite_urls_in_content().
+     * Similar to the original migration functionality.
+     *
+     * @param array $url_replacements Array mapping local URLs to CDN URLs [local_url => cdn_url]
+     * @return array {
+     *     @type int $posts_updated Number of posts updated
+     *     @type int $replacements_made Total number of URL replacements made
+     * }
+     */
+    private function rewrite_urls_in_content($url_replacements) {
+        global $wpdb;
+        
+        $posts_updated = 0;
+        $replacements_made = 0;
+        
+        if (empty($url_replacements)) {
+            return [
+                'posts_updated' => 0,
+                'replacements_made' => 0
+            ];
+        }
+        
+        // Get all post types that can contain content (posts, pages, custom post types)
+        $post_types = get_post_types(['public' => true], 'names');
+        $post_types[] = 'attachment'; // Also check attachment descriptions
+        $post_types_placeholders = implode(',', array_fill(0, count($post_types), '%s'));
+        
+        // Process each URL replacement
+        foreach ($url_replacements as $local_url => $cdn_url) {
+            // We need to handle both http and https, and URL-encoded versions
+            $local_url_http = str_replace('https://', 'http://', $local_url);
+            $local_url_https = str_replace('http://', 'https://', $local_url);
+            $cdn_url_http = str_replace('https://', 'http://', $cdn_url);
+            $cdn_url_https = str_replace('http://', 'https://', $cdn_url);
+            
+            // Also handle URL-encoded versions
+            $local_url_encoded = esc_url_raw($local_url);
+            $cdn_url_encoded = esc_url_raw($cdn_url);
+            
+            // Find all posts containing the local URL
+            // Build the query with proper placeholders
+            $query = "SELECT ID, post_content FROM {$wpdb->posts} 
+                WHERE post_type IN ({$post_types_placeholders}) 
+                AND post_content LIKE %s";
+            
+            $query_params = array_merge($post_types, ['%' . $wpdb->esc_like($local_url) . '%']);
+            $posts = $wpdb->get_results($wpdb->prepare($query, $query_params));
+            
+            foreach ($posts as $post) {
+                $original_content = $post->post_content;
+                $updated_content = $original_content;
+                $post_replacements = 0;
+                
+                // Replace https version (handle both plain and JSON-encoded)
+                if (strpos($updated_content, $local_url_https) !== false) {
+                    $updated_content = str_replace($local_url_https, $cdn_url_https, $updated_content);
+                    $post_replacements += substr_count($original_content, $local_url_https);
+                    // Also handle JSON-encoded URLs (Gutenberg blocks)
+                    $local_url_https_json = addslashes($local_url_https);
+                    $cdn_url_https_json = addslashes($cdn_url_https);
+                    if (strpos($updated_content, $local_url_https_json) !== false) {
+                        $updated_content = str_replace($local_url_https_json, $cdn_url_https_json, $updated_content);
+                    }
+                }
+                
+                // Replace http version (handle both plain and JSON-encoded)
+                if (strpos($updated_content, $local_url_http) !== false) {
+                    $updated_content = str_replace($local_url_http, $cdn_url_http, $updated_content);
+                    $post_replacements += substr_count($original_content, $local_url_http);
+                    // Also handle JSON-encoded URLs
+                    $local_url_http_json = addslashes($local_url_http);
+                    $cdn_url_http_json = addslashes($cdn_url_http);
+                    if (strpos($updated_content, $local_url_http_json) !== false) {
+                        $updated_content = str_replace($local_url_http_json, $cdn_url_http_json, $updated_content);
+                    }
+                }
+                
+                // Replace URL-encoded versions if different
+                if ($local_url_encoded !== $local_url_https && strpos($updated_content, $local_url_encoded) !== false) {
+                    $updated_content = str_replace($local_url_encoded, $cdn_url_encoded, $updated_content);
+                    $post_replacements += substr_count($original_content, $local_url_encoded);
+                }
+                
+                // Only update if content changed
+                if ($updated_content !== $original_content) {
+                    $wpdb->update(
+                        $wpdb->posts,
+                        ['post_content' => $updated_content],
+                        ['ID' => $post->ID],
+                        ['%s'],
+                        ['%d']
+                    );
+                    
+                    // Clear post cache
+                    clean_post_cache($post->ID);
+                    
+                    $posts_updated++;
+                    $replacements_made += $post_replacements;
+                }
+            }
+            
+            // Also check postmeta for URLs (some plugins store URLs in meta)
+            $meta_results = $wpdb->get_results($wpdb->prepare(
+                "SELECT post_id, meta_key, meta_value FROM {$wpdb->postmeta} 
+                WHERE meta_value LIKE %s",
+                '%' . $wpdb->esc_like($local_url) . '%'
+            ));
+            
+            foreach ($meta_results as $meta) {
+                $original_value = $meta->meta_value;
+                $updated_value = $original_value;
+                
+                // Replace https version
+                if (strpos($updated_value, $local_url_https) !== false) {
+                    $updated_value = str_replace($local_url_https, $cdn_url_https, $updated_value);
+                }
+                
+                // Replace http version
+                if (strpos($updated_value, $local_url_http) !== false) {
+                    $updated_value = str_replace($local_url_http, $cdn_url_http, $updated_value);
+                }
+                
+                // Replace URL-encoded versions if different
+                if ($local_url_encoded !== $local_url_https && strpos($updated_value, $local_url_encoded) !== false) {
+                    $updated_value = str_replace($local_url_encoded, $cdn_url_encoded, $updated_value);
+                }
+                
+                // Only update if value changed
+                if ($updated_value !== $original_value) {
+                    update_post_meta($meta->post_id, $meta->meta_key, $updated_value);
+                }
+            }
+        }
+        
+        return [
+            'posts_updated' => $posts_updated,
+            'replacements_made' => $replacements_made
+        ];
     }
 
     /**

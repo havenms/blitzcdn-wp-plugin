@@ -10,6 +10,8 @@ class UrlRewriter {
         $settings = get_option('blitzcdn_settings', []);
         $this->serve_from_cdn = $settings['serve_from_cdn'] ?? false;
 
+        // Always enable filters if serve_from_cdn is enabled
+        // This ensures URLs are rewritten even if content wasn't migrated properly
         if ($this->serve_from_cdn) {
             add_filter('wp_get_attachment_url', [$this, 'filter_attachment_url'], 10, 2);
             add_filter('wp_get_attachment_image_src', [$this, 'filter_image_src'], 10, 4);
@@ -103,25 +105,32 @@ class UrlRewriter {
      */
     public function filter_srcset($sources, $size_array, $image_src, $image_meta, $attachment_id) {
         $sizes_meta = get_post_meta($attachment_id, '_blitzcdn_sizes', true);
+        $cdn_url = get_post_meta($attachment_id, '_blitzcdn_cdn_url', true);
         
-        if (!is_array($sizes_meta) || !is_array($sources)) {
+        if (!is_array($sources)) {
             return $sources;
         }
 
+        // Get full-size image dimensions from metadata
+        $full_width = isset($image_meta['width']) ? $image_meta['width'] : 0;
+
         foreach ($sources as $width => $source) {
-            // We need to find which size name corresponds to this width/file.
-            // $image_meta['sizes'] contains the mapping.
-            if (!isset($image_meta['sizes']) || !is_array($image_meta['sizes'])) {
+            // Check if this is the full-size image
+            if ($full_width > 0 && $width == $full_width && $cdn_url) {
+                $sources[$width]['url'] = $cdn_url;
                 continue;
             }
 
-            foreach ($image_meta['sizes'] as $name => $size_info) {
-                if ($size_info['width'] == $width) {
-                    // Found the size name
-                    if (isset($sizes_meta[$name])) {
-                        $sources[$width]['url'] = $sizes_meta[$name]['url'];
+            // Handle intermediate sizes
+            if (is_array($sizes_meta) && isset($image_meta['sizes']) && is_array($image_meta['sizes'])) {
+                foreach ($image_meta['sizes'] as $name => $size_info) {
+                    if (isset($size_info['width']) && $size_info['width'] == $width) {
+                        // Found the size name
+                        if (isset($sizes_meta[$name]['url'])) {
+                            $sources[$width]['url'] = $sizes_meta[$name]['url'];
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         }
