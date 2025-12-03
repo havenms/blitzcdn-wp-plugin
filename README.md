@@ -258,10 +258,10 @@ Manages all interactions with the Appwrite API, including Storage and Database o
 | `get_endpoint()` | — | `string` | Get API endpoint |
 | `get_db_id()` | — | `string` | Get database ID |
 | `get_collection_id()` | — | `string` | Get collection ID |
-| `upload_file()` | `$file_path`, `$file_name` | `string\|false` | Upload file, returns file ID |
+| `upload_file()` | `$file_path`, `$file_name` | `string` or `false` | Upload file, returns file ID |
 | `delete_file()` | `$file_id` | `bool` | Delete file from storage |
-| `download_file()` | `$file_id` | `string\|false` | Download file content |
-| `create_document()` | `$data` | `array\|false` | Create tracking document in database |
+| `download_file()` | `$file_id` | `string` or `false` | Download file content |
+| `create_document()` | `$data` | `array` or `false` | Create tracking document in database |
 
 #### Upload Tracking Document Schema:
 
@@ -964,7 +964,7 @@ wp action-scheduler list --status=pending --hook=blitzcdn_background_migration_b
 
 ## License
 
-GPL-2.0-or-later
+This plugin is licensed under the GPL-2.0-or-later License.
 
 ---
 
