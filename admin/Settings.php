@@ -151,11 +151,11 @@ class Settings {
                 </div>
 
                 <div id="blitzcdn-migration-progress" style="margin-top: 20px; display: none;">
-                    <div style="background: #f0f0f1; border: 1px solid #ccc; height: 20px; width: 100%;">
-                        <div id="blitzcdn-progress-bar" style="background: #2271b1; height: 100%; width: 0%;"></div>
+                    <div style="background: #f0f0f1; border: 1px solid #ccc; height: 20px; width: 100%; border-radius: 4px; overflow: hidden;">
+                        <div id="blitzcdn-progress-bar" style="background: linear-gradient(90deg, #2271b1, #3794ff); height: 100%; width: 0%; transition: width 0.3s ease;"></div>
                     </div>
-                    <p id="blitzcdn-progress-text">0%</p>
-                    <div id="blitzcdn-migration-log" style="max-height: 200px; overflow-y: auto; background: #fff; border: 1px solid #ddd; padding: 10px; margin-top: 10px;"></div>
+                    <p id="blitzcdn-progress-text" style="margin-top: 10px; font-weight: 500;">0%</p>
+                    <div id="blitzcdn-migration-log" style="max-height: 300px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; border: 1px solid #333; padding: 15px; margin-top: 15px; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; border-radius: 4px;"></div>
                 </div>
             <?php endif; ?>
             
