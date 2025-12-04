@@ -38,6 +38,13 @@ function blitzcdn_init() {
 }
 add_action('plugins_loaded', 'blitzcdn_init');
 
+// Early initialization for admin-post requests (before plugins_loaded)
+// This ensures the handler is available even if plugins_loaded hasn't fired yet
+if (defined('DOING_ADMIN_POST') || (isset($_GET['action']) && $_GET['action'] === 'as_async_request_queue_runner')) {
+    // Ensure Core is initialized early for admin-post requests
+    add_action('init', 'blitzcdn_init', 1);
+}
+
 // Load CLI commands if WP-CLI is available
 if (defined('WP_CLI') && WP_CLI) {
     require_once BLITZCDN_PATH . 'includes/CLI.php';

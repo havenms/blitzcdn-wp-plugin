@@ -71,18 +71,30 @@ class Core {
     }
 
     private function load_action_scheduler() {
+        self::ensure_action_scheduler_loaded();
+    }
+
+    /**
+     * Static method to ensure Action Scheduler is loaded
+     * Can be called independently without requiring Core instance
+     * 
+     * @return void
+     */
+    private static function ensure_action_scheduler_loaded() {
         // Action Scheduler should be available via Composer
         // Load it if it hasn't been loaded yet
+        if (!defined('BLITZCDN_PATH')) {
+            return; // Plugin constants not defined yet
+        }
+        
         $action_scheduler_path = BLITZCDN_PATH . 'vendor/woocommerce/action-scheduler/action-scheduler.php';
         
-        if (file_exists($action_scheduler_path) && !class_exists('ActionScheduler', false)) {
+        if (file_exists($action_scheduler_path) && !class_exists('\ActionScheduler', false)) {
             require_once $action_scheduler_path;
-            
-            // Initialize Action Scheduler if it has an initialization function
-            if (function_exists('action_scheduler_init')) {
-                action_scheduler_init();
-            }
         }
+        
+        // Action Scheduler will initialize on the 'init' hook
+        // We don't need to manually trigger it - just ensure the file is loaded
     }
 
     private function check_action_scheduler() {
@@ -138,36 +150,39 @@ class Core {
      * @return void
      */
     public function handle_action_scheduler_queue_runner() {
-        // Prevent output buffering issues - clear all nested output buffers
-        while (ob_get_level() > 0) {
-            ob_end_clean();
-        }
-
-        // Ensure Action Scheduler is loaded (in case it wasn't loaded yet)
-        $this->load_action_scheduler();
-
-        // Check if Action Scheduler is available
-        if (!function_exists('as_get_scheduled_actions') || !class_exists('ActionScheduler_Store')) {
-            status_header(500);
-            header('Content-Type: text/plain');
-            die('Action Scheduler is not available');
-        }
-
-        // Check if Action Scheduler is initialized (safely check static method)
-        $is_initialized = false;
-        if (class_exists('ActionScheduler', false) && method_exists('ActionScheduler', 'is_initialized')) {
-            $is_initialized = ActionScheduler::is_initialized();
-        }
-
-        // If not initialized, check if the queue runner hook is available anyway
-        // (Action Scheduler might be partially initialized)
-        if (!$is_initialized && !has_action('action_scheduler_run_queue')) {
-            status_header(500);
-            header('Content-Type: text/plain');
-            die('Action Scheduler queue runner not available');
-        }
-
         try {
+            // Prevent output buffering issues - clear all nested output buffers
+            while (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+
+            // Ensure Action Scheduler is loaded (in case it wasn't loaded yet)
+            // Use static method to avoid dependency on instance state
+            self::ensure_action_scheduler_loaded();
+
+            // Check if Action Scheduler is available
+            // Use fully qualified class name (leading backslash) to reference global namespace
+            if (!function_exists('as_get_scheduled_actions') || !class_exists('\ActionScheduler_Store')) {
+                status_header(500);
+                header('Content-Type: text/plain');
+                die('Action Scheduler is not available');
+            }
+
+            // Check if Action Scheduler is initialized (safely check static method)
+            // Use fully qualified class name (leading backslash) to reference global namespace
+            $is_initialized = false;
+            if (class_exists('\ActionScheduler', false) && method_exists('\ActionScheduler', 'is_initialized')) {
+                $is_initialized = \ActionScheduler::is_initialized();
+            }
+
+            // If not initialized, check if the queue runner hook is available anyway
+            // (Action Scheduler might be partially initialized)
+            if (!$is_initialized && !has_action('action_scheduler_run_queue')) {
+                status_header(500);
+                header('Content-Type: text/plain');
+                die('Action Scheduler queue runner not available');
+            }
+
             // Trigger the queue runner
             // This is the same action that Action Scheduler's async request uses
             do_action('action_scheduler_run_queue', 'Admin Post Request');
@@ -177,15 +192,9 @@ class Core {
             header('Content-Type: text/plain');
             echo 'OK';
             exit;
-        } catch (\Exception $e) {
-            // Log error but don't expose details to prevent information leakage
-            error_log('BlitzCDN: Action Scheduler queue runner error: ' . $e->getMessage());
-            status_header(500);
-            header('Content-Type: text/plain');
-            die('Error processing queue');
-        } catch (\Error $e) {
-            // Also catch fatal errors (PHP 7+)
-            error_log('BlitzCDN: Action Scheduler queue runner fatal error: ' . $e->getMessage());
+        } catch (\Throwable $e) {
+            // Catch all errors (Exception and Error in PHP 7+)
+            error_log('BlitzCDN: Action Scheduler queue runner error: ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
             status_header(500);
             header('Content-Type: text/plain');
             die('Error processing queue');
