@@ -1,519 +1,971 @@
-# BlitzCDN Media Offload
+# BlitzCDN Media Offload — Internal Knowledge Base
 
-BlitzCDN is a WordPress plugin that seamlessly offloads your Media Library files to [Appwrite Storage](https://appwrite.io/docs/storage), a secure and scalable cloud storage solution. By integrating with a Content Delivery Network (CDN), it ensures fast, global delivery of your media assets while reducing server load and storage costs.
+> **Internal Documentation** — This document serves as the central knowledge base for the BlitzCDN WordPress plugin codebase. It documents every feature, component, and implementation detail of the system.
+
+---
 
 ## Table of Contents
 
-- [Features](#features)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [How It Works](#how-it-works)
-- [Migration](#migration)
-- [Compatibility](#compatibility)
-- [Troubleshooting](#troubleshooting)
-- [API Reference](#api-reference)
-- [Contributing](#contributing)
-- [License](#license)
+1. [Overview](#overview)
+2. [Technology Stack](#technology-stack)
+3. [Plugin Architecture](#plugin-architecture)
+4. [File Structure](#file-structure)
+5. [Core Components](#core-components)
+   - [Core.php — Main Orchestrator](#corephp--main-orchestrator)
+   - [AppwriteClient.php — Appwrite SDK Wrapper](#appwriteclientphp--appwrite-sdk-wrapper)
+   - [UploadHandler.php — Two-Phase Upload System](#uploadhandlerphp--two-phase-upload-system)
+   - [UrlRewriter.php — Dynamic URL Rewriting](#urlrewriterphp--dynamic-url-rewriting)
+   - [BackgroundMigrator.php — Server-Side Migration](#backgroundmigratorphp--server-side-migration)
+   - [Redownloader.php — Goodbye Procedure](#redownloaderphp--goodbye-procedure)
+   - [Compatibility.php — Plugin Compatibility Layer](#compatibilityphp--plugin-compatibility-layer)
+   - [Diagnostics.php — System Health Checks](#diagnosticsphp--system-health-checks)
+   - [CLI.php — WP-CLI Commands](#cliphp--wp-cli-commands)
+6. [Admin Components](#admin-components)
+   - [Settings.php — Admin Settings Page](#settingsphp--admin-settings-page)
+   - [Migrator.php — AJAX Migration Handler](#migratorphp--ajax-migration-handler)
+7. [Frontend JavaScript](#frontend-javascript)
+8. [Configuration](#configuration)
+   - [WordPress Settings](#wordpress-settings)
+   - [Environment Variables](#environment-variables)
+9. [Data Storage & Metadata](#data-storage--metadata)
+10. [WordPress Hooks Integration](#wordpress-hooks-integration)
+11. [Feature Details](#feature-details)
+    - [Automatic Media Offloading](#automatic-media-offloading)
+    - [URL Rewriting](#url-rewriting)
+    - [Migration Tools](#migration-tools)
+    - [Goodbye Procedure](#goodbye-procedure)
+    - [Content URL Rewriting](#content-url-rewriting)
+12. [Plugin Constants](#plugin-constants)
+13. [AJAX Endpoints](#ajax-endpoints)
+14. [Error Handling & Logging](#error-handling--logging)
+15. [Debugging](#debugging)
 
-## Features
+---
 
-- **Automatic Offloading**: Automatically uploads new media files to Appwrite Storage upon upload.
-- **CDN Integration**: Serve files through a custom CDN domain for improved performance.
-- **Multi-Size Support**: Handles original files and all WordPress-generated image sizes.
-- **Safe Deletion**: Optionally delete local files only after successful remote upload verification.
-- **Bulk Migration**: Migrate existing Media Library items in batches.
-- **URL Rewriting**: Dynamically rewrites attachment URLs to point to CDN/Appwrite URLs.
-- **Elementor Compatibility**: Automatically clears Elementor cache after uploads.
-- **WooCommerce Support**: Fully compatible with WooCommerce product images.
-- **Admin Interface**: User-friendly settings page with migration tools.
-- **Error Handling**: Robust error logging and graceful fallbacks.
+## Overview
 
-## Requirements
+BlitzCDN is a WordPress plugin that offloads Media Library files to Appwrite Storage and serves them through a CDN. The plugin integrates deeply with WordPress's media handling system to provide:
 
-- **PHP**: 7.4 or higher
-- **WordPress**: 5.0 or higher
-- **Appwrite**: 1.0 or higher (SDK version 10.0+)
-- **Composer**: For dependency management
-- **Appwrite Account**: With Storage service enabled
-- **Action Scheduler**: Automatically installed via Composer (included in `woocommerce/action-scheduler` package)
+- **Automatic file offloading** to Appwrite Storage on upload
+- **CDN delivery** through a custom domain (e.g., `files.blitzcdn.net`)
+- **Two-phase upload system** handling originals and WordPress-generated image sizes
+- **Safe local file deletion** after verified remote upload
+- **Bulk migration tools** for existing media (browser-based and background)
+- **Goodbye procedure** to redownload all files back to WordPress
+- **Dynamic URL rewriting** for seamless CDN integration
+- **Upload tracking** via Appwrite Database for user-level management
 
-## Installation
+---
 
-1. **Download the Plugin**:
-   - Clone or download this plugin into your `wp-content/plugins/blitzcdn` directory:
+## Technology Stack
 
-     ```bash
-     git clone https://github.com/your-repo/blitzcdn-wp-plugin.git wp-content/plugins/blitzcdn
-     ```
+| Component | Details |
+|-----------|---------|
+| **Language** | PHP 7.4+ |
+| **Framework** | WordPress Plugin API (WordPress 5.0+) |
+| **Remote Storage** | Appwrite Storage |
+| **SDK** | Appwrite PHP SDK ^10.0 |
+| **Background Jobs** | WooCommerce Action Scheduler ^3.7 |
+| **Package Manager** | Composer (PSR-4 autoloading) |
+| **Frontend** | jQuery (WordPress bundled) |
 
-2. **Install Dependencies**:
-   - Navigate to the plugin directory and run Composer:
+### Dependencies (`composer.json`)
 
-     ```bash
-     cd wp-content/plugins/blitzcdn
-     composer install
-     ```
-
-3. **Activate the Plugin**:
-   - Go to **WordPress Admin > Plugins** and activate "BlitzCDN Media Offload".
-
-4. **Configure Settings**:
-   - Navigate to **Settings > BlitzCDN** to configure your Appwrite credentials and options.
-
-## Configuration
-
-Access the settings page at **WordPress Admin > Settings > BlitzCDN**.
-
-### Required Settings
-
-- **Project ID**: Your Appwrite Project ID (found in your Appwrite console).
-- **API Key**: An API Key with `storage.write` and `storage.read` permissions.
-- **Bucket ID**: The ID of the Storage Bucket where files will be stored.
-- **Appwrite Endpoint**: Your Appwrite API endpoint (default: `https://cloud.appwrite.io/v1`).
-
-### Optional Settings
-
-- **CDN Domain**: Your custom CDN domain (e.g., `files.blitzcdn.net`). If provided, URLs will be rewritten to use this domain instead of the direct Appwrite endpoint.
-- **Serve from CDN**: Enable to rewrite attachment URLs to use CDN/Appwrite URLs instead of local URLs.
-- **Safe Delete Local Files**: Enable to automatically delete local files after successful upload to Appwrite. **Warning**: Only enable this if you're confident in your setup, as it may lead to data loss if uploads fail.
-- **Delete from Appwrite**: Enable to delete files from Appwrite when you delete them from WordPress.
-
-### Environment Variables (Alternative)
-
-You can also configure the plugin using environment variables or a `.env` file in the plugin root:
-
-```env
-APPWRITE_PROJECT_ID=your_project_id
-APPWRITE_API_KEY=your_api_key
-APPWRITE_BUCKET_ID=your_bucket_id
-APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1
-APPWRITE_CDN_DOMAIN=files.blitzcdn.net
+```json
+{
+  "require": {
+    "php": ">=7.4",
+    "appwrite/appwrite": "^10.0",
+    "woocommerce/action-scheduler": "^3.7"
+  }
+}
 ```
 
-## Usage
+---
 
-Once configured, the plugin works automatically:
+## Plugin Architecture
 
-1. **New Uploads**: When you upload media through WordPress, files are automatically offloaded to Appwrite.
-2. **Existing Media**: Use the built-in migration tool to offload existing media.
-3. **URL Rewriting**: If "Serve from CDN" is enabled, all attachment URLs will point to your CDN/Appwrite URLs.
+The plugin follows a modular architecture with a central orchestrator (`Core.php`) that initializes all components:
 
-### Manual Offloading
-
-For programmatic offloading, you can use the following hooks:
-
-```php
-// Trigger offloading for a specific attachment
-do_action('blitzcdn_upload_complete', $attachment_id);
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                       WordPress Core                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌──────────────┐     ┌─────────────────┐     ┌──────────────┐  │
+│  │ Upload Hooks │────▶│  UploadHandler  │────▶│ AppwriteClient│  │
+│  └──────────────┘     └─────────────────┘     └──────────────┘  │
+│                              │                       │           │
+│                              ▼                       ▼           │
+│                       ┌─────────────┐         ┌───────────┐     │
+│                       │  PostMeta   │         │ Appwrite  │     │
+│                       │  Storage    │         │ Storage + │     │
+│                       └─────────────┘         │ Database  │     │
+│                              │                └───────────┘     │
+│                              ▼                                   │
+│  ┌──────────────┐     ┌─────────────────┐                       │
+│  │ Attachment   │────▶│   UrlRewriter   │                       │
+│  │ URL Filters  │     └─────────────────┘                       │
+│  └──────────────┘                                               │
+│                                                                  │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │                     Admin Interface                        │  │
+│  │  ┌─────────────┐   ┌──────────────┐   ┌────────────────┐  │  │
+│  │  │  Settings   │   │   Migrator   │   │ BackgroundMigr │  │  │
+│  │  │   Page      │   │    (AJAX)    │   │ (Action Sched) │  │  │
+│  │  └─────────────┘   └──────────────┘   └────────────────┘  │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## How It Works
+---
 
-BlitzCDN integrates deeply with WordPress's media handling system. Here's a detailed breakdown of the internal architecture and workflow:
+## File Structure
 
-### Core Components
-
-#### 1. Core (`includes/Core.php`)
-
-The main orchestrator class that initializes all components:
-
-- Loads the Appwrite client
-- Initializes upload handler, URL rewriter, and compatibility modules
-- Handles plugin activation/deactivation
-
-#### 2. Appwrite Client (`includes/AppwriteClient.php`)
-
-Manages all interactions with the Appwrite API:
-
-- Initializes the Appwrite SDK client
-- Handles file uploads and deletions
-- Supports environment variable configuration
-- Provides configuration validation
-
-#### 3. Upload Handler (`includes/UploadHandler.php`)
-
-Manages the two-phase upload process:
-
-##### Phase 1: Original File Upload
-
-- Hooks into `wp_handle_upload` filter
-- Uploads the original file immediately after it's saved locally
-- Caches the Appwrite file ID for metadata association
-
-##### Phase 2: Intermediate Sizes
-
-- Hooks into `wp_generate_attachment_metadata` filter
-- Uploads all WordPress-generated image sizes (thumbnail, medium, large, etc.)
-- Saves metadata to postmeta for URL rewriting
-- Implements safe deletion of local files (if enabled)
-
-##### Deletion Handling
-
-- Hooks into `delete_attachment` action
-- Optionally deletes files from Appwrite when attachments are removed from WordPress
-
-#### 4. URL Rewriter (`includes/UrlRewriter.php`)
-
-Dynamically rewrites attachment URLs when "Serve from CDN" is enabled:
-
-- Filters `wp_get_attachment_url`, `wp_get_attachment_image_src`, `wp_calculate_image_srcset`, and `image_downsize`
-- Replaces local URLs with CDN/Appwrite URLs
-- Handles responsive images and srcsets correctly
-
-#### 5. Compatibility (`includes/Compatibility.php`)
-
-Ensures compatibility with popular plugins:
-
-- Clears Elementor cache after uploads to prevent stale cached images
-
-#### 6. Background Migrator (`includes/BackgroundMigrator.php`)
-
-Manages server-side background migrations using Action Scheduler:
-
-- Processes attachments in small batches to avoid timeouts
-- Uses Action Scheduler for reliable, independent background processing
-- Continues running even when users close their browser
-- Works on low-traffic sites without requiring page visits
-- Provides status tracking and progress updates
-
-#### 7. Admin Interface
-
-- **Settings (`admin/Settings.php`)**: Provides the configuration interface
-- **Migrator (`admin/Migrator.php`)**: Handles bulk migration of existing media via AJAX
-
-### Data Flow
-
-1. **Upload Initiation**: User uploads file via WordPress media uploader
-2. **Local Storage**: WordPress saves file to `wp-content/uploads/`
-3. **Phase 1 Upload**: BlitzCDN uploads original file to Appwrite, caches file ID
-4. **Metadata Creation**: WordPress creates attachment post and metadata
-5. **Metadata Saving**: BlitzCDN saves Appwrite file ID and CDN URL to postmeta
-6. **Phase 2 Upload**: BlitzCDN uploads generated image sizes to Appwrite
-7. **Safe Deletion**: If enabled, local files are deleted after successful uploads
-8. **URL Rewriting**: When serving, URLs are rewritten to CDN/Appwrite endpoints
-
-### Metadata Storage
-
-BlitzCDN stores the following postmeta for each attachment:
-
-- `_blitzcdn_file_id`: Appwrite file ID for the original file
-- `_blitzcdn_cdn_url`: CDN URL for the original file
-- `_blitzcdn_sizes`: Array of file IDs and URLs for intermediate sizes
-
-### CDN URL Construction
-
-CDN URLs are constructed as:
-
-```text
-https://{cdn_domain}/storage/buckets/{bucket_id}/files/{file_id}/view?project={project_id}
+```
+blitzcdn-wp-plugin/
+├── blitzcdn.php                 # Main plugin entry point
+├── composer.json                # Composer dependencies
+├── composer.lock                # Locked dependency versions
+├── .env.example                 # Environment configuration template
+├── .env                         # Environment configuration (not tracked)
+├── README.md                    # This knowledge base
+├── debug-db.php                 # Standalone Appwrite Database test script
+│
+├── includes/                    # Core plugin classes (namespace: BlitzCDN\)
+│   ├── Core.php                 # Main orchestrator (singleton)
+│   ├── AppwriteClient.php       # Appwrite SDK wrapper
+│   ├── UploadHandler.php        # Two-phase upload system
+│   ├── UrlRewriter.php          # Dynamic URL rewriting
+│   ├── BackgroundMigrator.php   # Action Scheduler-based migration
+│   ├── Redownloader.php         # Goodbye procedure (redownload from Appwrite)
+│   ├── Compatibility.php        # Plugin compatibility layer
+│   ├── Diagnostics.php          # System diagnostics
+│   └── CLI.php                  # WP-CLI commands
+│
+├── admin/                       # Admin components (namespace: BlitzCDN\Admin\)
+│   ├── Settings.php             # Settings page UI and registration
+│   └── Migrator.php             # AJAX handlers for migration tools
+│
+├── assets/                      # Static assets
+│   └── js/
+│       └── migration.js         # Frontend migration/redownload logic
+│
+├── node-scripts/                # Standalone Node/Bun scripts
+│   ├── index.ts                 # TypeScript utility
+│   └── ...
+│
+└── vendor/                      # Composer dependencies (not tracked)
 ```
 
-If no CDN domain is set, the direct Appwrite endpoint is used.
+---
 
-## Migration
+## Core Components
 
-The plugin includes a bulk migration tool to offload existing media:
+### Core.php — Main Orchestrator
 
-1. Go to **Settings > BlitzCDN**
-2. Click "Migrate Existing Media"
-3. The tool will process attachments in batches of 5
-4. Progress is displayed with real-time logging
+**Namespace:** `BlitzCDN\Core`  
+**Pattern:** Singleton
 
-**Migration Process**:
+The central orchestrator that initializes all plugin components. It manages the plugin lifecycle and serves as the entry point.
 
-- Identifies attachments without BlitzCDN metadata
-- Reuses the Phase 2 upload logic for each attachment
-- Updates progress and logs results
-- Handles errors gracefully without stopping the process
+#### Key Responsibilities:
 
-### Background Migration (server-side)
+- Loads Action Scheduler from Composer vendor directory
+- Initializes all component classes
+- Registers activation/deactivation hooks
+- Provides getter methods for accessing components
 
-For large sites, the plugin supports a server-side background migration that continues processing even when the browser is closed. This uses **Action Scheduler** (a battle-tested job queue system used by WooCommerce) instead of WordPress's unreliable wp-cron system.
-
-#### How It Works
-
-- **Technology:** Uses [Action Scheduler](https://actionscheduler.org/) for reliable background processing
-- **Class:** `\BlitzCDN\BackgroundMigrator` — registers an Action Scheduler hook `blitzcdn_background_migration_batch` and exposes methods to start/stop the process
-- **Scheduling:** The migrator schedules batches using `as_schedule_single_action()` and automatically schedules the next batch after each completion
-- **Batch size:** Default is small (`5`) to avoid PHP timeouts; defined as `BATCH_SIZE` in `includes/BackgroundMigrator.php`
-- **Status storage:** Migration state is stored in the `blitzcdn_migration_status` option with these keys:
-   - `status` — `'running'`, `'stopped'`, `'completed'`, or `'idle'`
-   - `processed` — number of attachments processed so far
-   - `total` — total attachments at the start of migration
-   - `start_time` / `completed_time` — timestamps
-- **Admin controls & UI:** The settings page (`Settings > BlitzCDN`) includes:
-   - `Start Background Migration` button (AJAX endpoint `wp_ajax_blitzcdn_start_background_migration`)
-   - `Stop Background Migration` button (AJAX endpoint `wp_ajax_blitzcdn_stop_background_migration`)
-   - Status polling (AJAX endpoint `wp_ajax_blitzcdn_get_background_status`) that updates every 5 seconds
-- **Processing:** For each attachment ID in the batch, the migrator calls `UploadHandler::handle_upload_phase_2()` to reuse the same upload and metadata handling logic
-
-#### Advantages Over wp-cron
-
-- **Works independently:** Doesn't require site traffic to trigger batches
-- **Reliable:** Battle-tested system used by WooCommerce for processing millions of tasks
-- **Built-in retry:** Action Scheduler automatically retries failed batches
-- **System cron support:** Can optionally use system cron for maximum reliability on zero-traffic sites
-- **No freezing:** Unlike wp-cron, Action Scheduler doesn't halt or freeze during processing
-
-#### Setup and Configuration
-
-**Basic Setup (Recommended):**
-
-Action Scheduler works out of the box using WordPress's built-in cron system. No additional configuration is required for most sites.
-
-**For Maximum Reliability (Optional):**
-
-For zero-traffic sites or maximum reliability, you can set up a system cron to trigger Action Scheduler. Action Scheduler provides a built-in endpoint that processes pending actions:
-
-```bash
-# Add to your crontab (runs every minute)
-* * * * * curl -s "https://example.com/wp-admin/admin-post.php?action=as_async_request_queue_runner" > /dev/null 2>&1
-```
-
-Or using `wget`:
-
-```bash
-* * * * * wget -q -O - "https://example.com/wp-admin/admin-post.php?action=as_async_request_queue_runner" > /dev/null 2>&1
-```
-
-**Viewing Scheduled Actions:**
-
-You can view and manage scheduled actions using the Action Scheduler admin interface (if available) or via WP-CLI:
-
-```bash
-wp action-scheduler list --status=pending
-```
-
-#### Testing Background Migration
-
-1. **Prepare Test Environment:**
-   - Ensure you have some media files in your WordPress Media Library that haven't been migrated yet
-   - Verify Action Scheduler is installed: Check that `vendor/woocommerce/action-scheduler` exists after running `composer install`
-
-2. **Start Migration:**
-   - Go to **Settings > BlitzCDN**
-   - Click "Start Background Migration"
-   - The status should update to show "running" with processed/total counts
-
-3. **Verify It's Working:**
-   - Check the status updates in the admin panel (updates every 5 seconds)
-   - Close your browser and wait a few minutes
-   - Return to the settings page - the migration should still be running and progressing
-   - Check `wp-content/debug.log` for any errors (if `WP_DEBUG_LOG` is enabled)
-
-4. **Monitor Progress:**
-   - The status panel shows real-time progress
-   - Check WordPress debug log for detailed error messages
-   - Verify files are being uploaded to Appwrite by checking your Appwrite Storage bucket
-
-5. **Stop Migration (if needed):**
-   - Click "Stop Background Migration" to halt the process
-   - The status will update to "stopped"
-
-6. **Verify Completion:**
-   - When complete, status will show "completed"
-   - Check that all media files have the `_blitzcdn_file_id` postmeta
-   - Verify files are accessible via CDN URLs (if "Serve from CDN" is enabled)
-
-#### Troubleshooting Background Migration
-
-- **Migration not starting:** Check that Action Scheduler is installed (`composer install`) and that the admin notice doesn't show any errors
-- **Migration stuck:** Check WordPress debug log for errors. Failed batches are automatically retried by Action Scheduler
-- **Slow processing:** Reduce `BATCH_SIZE` in `includes/BackgroundMigrator.php` if you're on a shared host
-- **Not processing when browser is closed:** Set up system cron (see above) for maximum reliability on low-traffic sites
-
-### Browser-based migration (existing behavior)
-
-The original AJAX-based migration UI remains available for manual runs from the admin screen. This is useful for small sites or when you want immediate, browser-visible logging. On large sites, prefer the background migration for reliability and to avoid long-running admin requests.
-
-## Compatibility
-
-### Supported Plugins
-
-- **Elementor**: Cache is automatically cleared after uploads
-- **WooCommerce**: Fully compatible with product galleries and images
-
-### WordPress Versions
-
-- Tested with WordPress 5.0+
-- Compatible with multisite installations
-
-### PHP Compatibility
-
-- Requires PHP 7.4+ for Appwrite SDK compatibility
-- Uses modern PHP features like typed properties and arrow functions where available
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Uploads Fail**
-   - Check Appwrite credentials and permissions
-   - Ensure the bucket exists and has proper permissions
-   - Review error logs in `wp-content/debug.log`
-
-2. **Images Don't Load**
-   - Verify CDN domain configuration
-   - Check if "Serve from CDN" is enabled
-   - Ensure Appwrite bucket permissions allow public access
-
-3. **Migration Stuck**
-   - Check browser console for JavaScript errors
-   - Verify AJAX endpoints are accessible
-   - Increase PHP memory limit if processing large files
-   - For background migrations: Check that Action Scheduler is installed and working
-   - Review Action Scheduler logs (if available) or WordPress debug log
-   - Verify system cron is running (if configured) for background migrations
-
-4. **Local Files Not Deleted**
-   - Ensure "Safe Delete" is enabled
-   - Check that all uploads succeeded before deletion
-   - Review error logs for upload failures
-
-### Debugging
-
-Enable WordPress debugging:
-
-```php
-define('WP_DEBUG', true);
-define('WP_DEBUG_LOG', true);
-```
-
-BlitzCDN logs errors to the WordPress debug log. Check `wp-content/debug.log` for detailed error messages.
-
-### Support
-
-For issues not covered here:
-
-- Check the [Appwrite Documentation](https://appwrite.io/docs)
-- Review WordPress [Media Library Documentation](https://developer.wordpress.org/plugins/media/)
-- Contact support at support@blitzcdn.net
-
-## API Reference
-
-### Hooks
-
-#### Actions
-
-- `blitzcdn_upload_complete`: Fired after a file is successfully uploaded to Appwrite
-
-  ```php
-  do_action('blitzcdn_upload_complete', $attachment_id);
-  ```
-
-#### Filters
-
-- `wp_handle_upload`: Used for Phase 1 uploads
-- `wp_generate_attachment_metadata`: Used for Phase 2 uploads
-- `wp_get_attachment_url`: Used for URL rewriting
-- `wp_get_attachment_image_src`: Used for image source rewriting
-- `wp_calculate_image_srcset`: Used for responsive image rewriting
-- `image_downsize`: Used for image dimension handling
-
-### Classes
-
-#### `\BlitzCDN\Core`
-
-Main plugin class. Access via:
+#### Singleton Access:
 
 ```php
 $blitzcdn = \BlitzCDN\Core::get_instance();
 ```
 
-#### `\BlitzCDN\AppwriteClient`
+#### Component Initialization Order:
 
-Handles Appwrite API interactions.
+1. Load Action Scheduler (`load_action_scheduler()`)
+2. Initialize `AppwriteClient`
+3. Initialize `UploadHandler` (depends on AppwriteClient)
+4. Initialize `UrlRewriter`
+5. Initialize `Compatibility`
+6. Initialize `BackgroundMigrator`
+7. Initialize `Redownloader` (depends on AppwriteClient)
+8. Check Action Scheduler availability
+9. Initialize Admin components (Settings, Migrator) — *only in admin context*
 
-#### `\BlitzCDN\UploadHandler`
+#### Public Methods:
 
-Manages upload logic.
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_instance()` | `Core` | Returns singleton instance |
+| `get_upload_handler()` | `UploadHandler` | Access upload handler |
+| `get_background_migrator()` | `BackgroundMigrator` | Access background migrator |
+| `get_redownloader()` | `Redownloader` | Access redownloader |
+| `activate()` | `void` | Sets default options on plugin activation |
+| `deactivate()` | `void` | Cleanup on deactivation (currently no-op) |
 
-#### `\BlitzCDN\UrlRewriter`
+#### Default Options (set on activation):
 
-Handles URL rewriting.
-
-#### `\BlitzCDN\BackgroundMigrator`
-
-Manages server-side background migrations using Action Scheduler.
-
-### AJAX Endpoints
-
-- `wp_ajax_blitzcdn_migrate_batch`: Processes migration batches (browser-based)
-- `wp_ajax_blitzcdn_get_migration_stats`: Retrieves migration statistics
-- `wp_ajax_blitzcdn_start_background_migration`: Starts server-side background migration
-- `wp_ajax_blitzcdn_stop_background_migration`: Stops server-side background migration
-- `wp_ajax_blitzcdn_get_background_status`: Retrieves background migration status
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Make your changes and test thoroughly
-4. Commit your changes: `git commit -am 'Add some feature'`
-5. Push to the branch: `git push origin feature/your-feature`
-6. Submit a pull request
-
-### Development Setup
-
-1. Clone the repository
-2. Run `composer install` (this will install Action Scheduler and Appwrite SDK)
-3. Activate the plugin in a WordPress development environment
-4. Configure your Appwrite credentials in **Settings > BlitzCDN**
-5. Use the included migration tool for testing
-
-### Testing Background Migration
-
-To test the background migration system:
-
-1. **Setup:**
-   - Ensure you have media files in your WordPress Media Library
-   - Configure Appwrite credentials in the plugin settings
-   - Run `composer install` to ensure Action Scheduler is installed
-
-2. **Test Basic Functionality:**
-   - Go to **Settings > BlitzCDN**
-   - Click "Start Background Migration"
-   - Verify the status updates show "running"
-   - Watch the processed/total counts increase
-   - Close your browser and wait 2-3 minutes
-   - Return to the settings page - migration should still be running
-
-3. **Test Stop Functionality:**
-   - Start a migration
-   - Click "Stop Background Migration"
-   - Verify status changes to "stopped"
-   - Verify no new batches are processed
-
-4. **Test Completion:**
-   - Let a migration run to completion
-   - Verify status shows "completed"
-   - Check that media files have `_blitzcdn_file_id` postmeta
-   - Verify files are accessible via CDN (if enabled)
-
-5. **Test Error Handling:**
-   - Temporarily break Appwrite credentials
-   - Start a migration
-   - Check WordPress debug log for error messages
-   - Verify migration continues processing other items (errors are logged but don't stop the process)
-
-6. **Test with System Cron (Optional):**
-   - Set up system cron to trigger Action Scheduler (see Background Migration section)
-   - Start a migration on a site with no traffic
-   - Verify batches process even without page visits
-
-### Coding Standards
-
-- Follow WordPress Coding Standards
-- Use PSR-4 autoloading
-- Include PHPDoc comments for all classes and methods
-- Test with multiple WordPress versions
-
-## License
-
-This plugin is licensed under the GPL-2.0+ License. See the LICENSE file for details.
+```php
+[
+    'project_id' => '',
+    'api_key' => '',
+    'bucket_id' => '',
+    'cdn_domain' => '',
+    'endpoint' => 'https://cloud.appwrite.io/v1',
+    'serve_from_cdn' => false,
+    'safe_delete' => false,
+    'delete_remote' => false,
+]
+```
 
 ---
 
-**BlitzCDN** - Fast, reliable media offloading for WordPress.
+### AppwriteClient.php — Appwrite SDK Wrapper
+
+**Namespace:** `BlitzCDN\AppwriteClient`
+
+Manages all interactions with the Appwrite API, including Storage and Database operations.
+
+#### Configuration Sources (priority order):
+
+1. System environment variables (`getenv()`)
+2. PHP `$_ENV` superglobal
+3. `.env` file in plugin root
+
+#### Environment Variables:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `APPWRITE_PROJECT_ID` | Yes | Appwrite project ID |
+| `APPWRITE_API_KEY` | Yes | API key with storage.read, storage.write permissions |
+| `APPWRITE_BUCKET_ID` | Yes | Storage bucket ID |
+| `APPWRITE_ENDPOINT` | No | API endpoint (default: `https://cloud.appwrite.io/v1`) |
+| `APPWRITE_CDN_DOMAIN` | No | Custom CDN domain |
+| `APPWRITE_DB_ID` | No | Database ID for upload tracking |
+| `APPWRITE_COLLECTION_ID` | No | Collection ID for upload tracking |
+
+#### Public Methods:
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `is_configured()` | — | `bool` | Check if client has valid credentials |
+| `get_bucket_id()` | — | `string` | Get bucket ID |
+| `get_project_id()` | — | `string` | Get project ID |
+| `get_cdn_domain()` | — | `string` | Get CDN domain |
+| `get_endpoint()` | — | `string` | Get API endpoint |
+| `get_db_id()` | — | `string` | Get database ID |
+| `get_collection_id()` | — | `string` | Get collection ID |
+| `upload_file()` | `$file_path`, `$file_name` | `string` or `false` | Upload file, returns file ID |
+| `delete_file()` | `$file_id` | `bool` | Delete file from storage |
+| `download_file()` | `$file_id` | `string` or `false` | Download file content |
+| `create_document()` | `$data` | `array` or `false` | Create tracking document in database |
+
+#### Upload Tracking Document Schema:
+
+```php
+[
+    'email' => 'user@example.com',      // Account email from settings
+    'fileId' => 'appwrite-file-id',     // Appwrite storage file ID
+    'originalUrl' => 'https://...',     // Original WordPress URL
+    'createdAt' => '2024-01-01T00:00:00Z' // ISO 8601 timestamp
+]
+```
+
+---
+
+### UploadHandler.php — Two-Phase Upload System
+
+**Namespace:** `BlitzCDN\UploadHandler`
+
+Manages the WordPress media upload workflow with a two-phase approach to handle both original files and generated image sizes.
+
+#### Why Two Phases?
+
+WordPress generates intermediate image sizes (thumbnail, medium, large, etc.) **after** the original file is uploaded. The two-phase system ensures:
+
+1. Original file is uploaded immediately (Phase 1)
+2. Generated sizes are uploaded after WordPress creates them (Phase 2)
+
+#### Phase 1: Original File Upload
+
+**Hook:** `wp_handle_upload` (filter)
+
+Triggered immediately after WordPress places a file in `wp-content/uploads/`.
+
+**Flow:**
+1. Check if AppwriteClient is configured
+2. Verify account email is set in settings
+3. Upload original file to Appwrite Storage
+4. Cache file ID in static property for Phase 2
+5. Create tracking document in Appwrite Database
+
+#### Metadata Save
+
+**Hook:** `add_attachment` (action)
+
+Associates the cached file ID with the WordPress attachment post.
+
+**Metadata Saved:**
+- `_blitzcdn_file_id`: Appwrite file ID for original
+- `_blitzcdn_cdn_url`: CDN URL for original
+
+#### Phase 2: Intermediate Sizes
+
+**Hook:** `wp_generate_attachment_metadata` (filter)
+
+Triggered after WordPress generates all image sizes.
+
+**Flow:**
+1. Verify original file metadata exists (upload if missing)
+2. Iterate through all sizes in `$metadata['sizes']`
+3. Upload each size to Appwrite
+4. Store size metadata in `_blitzcdn_sizes` postmeta
+5. **Rewrite URLs in post content** (local → CDN)
+6. Safe delete local files if enabled
+7. Fire `blitzcdn_upload_complete` action
+
+#### Content URL Rewriting (on upload)
+
+When files are successfully uploaded, the handler automatically rewrites URLs in:
+- All public post types' content
+- Attachment descriptions
+- Post meta values
+
+This handles:
+- HTTP and HTTPS URL variants
+- URL-encoded versions
+- JSON-encoded URLs (Gutenberg blocks)
+
+#### Safe Delete Logic
+
+When `safe_delete` option is enabled AND all uploads succeed:
+1. Delete original file from `wp-content/uploads/`
+2. Delete all intermediate size files
+
+**Important:** Deletion only occurs if ALL uploads (original + all sizes) succeed.
+
+#### Attachment Deletion
+
+**Hook:** `delete_attachment` (action)
+
+When `delete_remote` option is enabled:
+1. Delete original file from Appwrite
+2. Delete all size files from Appwrite
+
+---
+
+### UrlRewriter.php — Dynamic URL Rewriting
+
+**Namespace:** `BlitzCDN\UrlRewriter`
+
+Dynamically rewrites WordPress attachment URLs to CDN URLs at runtime. Only active when `serve_from_cdn` setting is enabled.
+
+#### Hooked Filters:
+
+| Filter | Priority | Description |
+|--------|----------|-------------|
+| `wp_get_attachment_url` | 10 | Main attachment URL |
+| `wp_get_attachment_image_src` | 10 | Image src array |
+| `wp_calculate_image_srcset` | 10 | Responsive image srcset |
+| `image_downsize` | 10 | Image dimension handling |
+
+#### URL Rewriting Logic:
+
+**Full Size Images:**
+```php
+$cdn_url = get_post_meta($post_id, '_blitzcdn_cdn_url', true);
+```
+
+**Intermediate Sizes:**
+```php
+$sizes_meta = get_post_meta($attachment_id, '_blitzcdn_sizes', true);
+$cdn_url = $sizes_meta[$size_name]['url'];
+```
+
+#### CDN URL Format:
+
+```
+https://{cdn_domain}/storage/buckets/{bucket_id}/files/{file_id}/view?project={project_id}
+```
+
+If no CDN domain is configured, the direct Appwrite endpoint is used.
+
+#### Srcset Handling:
+
+The `filter_srcset()` method maps WordPress srcset entries (keyed by width) to the correct CDN URLs by matching widths from image metadata.
+
+---
+
+### BackgroundMigrator.php — Server-Side Migration
+
+**Namespace:** `BlitzCDN\BackgroundMigrator`
+
+Handles bulk migration of existing media using Action Scheduler for reliable background processing.
+
+#### Constants:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `ACTION_HOOK` | `'blitzcdn_background_migration_batch'` | Action Scheduler hook name |
+| `OPTION_STATUS` | `'blitzcdn_migration_status'` | Option name for status storage |
+| `BATCH_SIZE` | `5` | Attachments per batch |
+
+#### Status Option Schema:
+
+```php
+[
+    'status' => 'idle|running|stopped|completed',
+    'processed' => 0,           // Number processed
+    'total' => 100,             // Total at start
+    'start_time' => 1234567890, // Unix timestamp
+    'stopped_time' => null,     // Set when stopped
+    'completed_time' => null,   // Set when completed
+]
+```
+
+#### Public Methods:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `start_migration()` | `bool` | Start background migration |
+| `stop_migration()` | `bool` | Stop migration (mark as stopped) |
+| `get_status()` | `array` | Get current status |
+| `process_batch()` | `void` | Process one batch (called by Action Scheduler) |
+| `manual_execute_batch()` | `array` | Manually process one batch |
+
+#### Batch Processing Flow:
+
+1. Check status is `running`
+2. Query attachments without `_blitzcdn_file_id` meta
+3. For each attachment, call `UploadHandler::handle_upload_phase_2()`
+4. Update processed count
+5. Schedule next batch (1 second delay)
+
+#### Scheduling:
+
+```php
+// First batch (immediate)
+as_schedule_single_action(time(), self::ACTION_HOOK);
+
+// Subsequent batches
+as_schedule_single_action(time() + 1, self::ACTION_HOOK);
+```
+
+---
+
+### Redownloader.php — Goodbye Procedure
+
+**Namespace:** `BlitzCDN\Redownloader`
+
+Handles downloading files from Appwrite back to WordPress local storage. Used when users want to leave BlitzCDN.
+
+#### Purpose:
+
+1. Download all files from Appwrite to `wp-content/uploads/`
+2. Preserve original file paths
+3. Rewrite CDN URLs back to local URLs in content
+4. Clear BlitzCDN metadata
+5. Optionally delete files from Appwrite
+
+#### Public Methods:
+
+| Method | Parameters | Returns | Description |
+|--------|------------|---------|-------------|
+| `get_redownload_stats()` | — | `array` | Get count and IDs of attachments with BlitzCDN metadata |
+| `redownload_attachment()` | `$attachment_id`, `$delete_from_appwrite` | `array` | Process single attachment |
+| `process_batch()` | `$attachment_ids`, `$delete_from_appwrite` | `array` | Process multiple attachments |
+
+#### Redownload Flow (per attachment):
+
+1. Verify attachment exists and has BlitzCDN metadata
+2. Download original file from Appwrite
+3. Download all intermediate sizes
+4. Rewrite URLs in post content (CDN → local)
+5. Clear BlitzCDN postmeta
+6. Optionally delete files from Appwrite
+
+#### Result Schema:
+
+```php
+[
+    'status' => 'success|partial|error',
+    'message' => 'Status message',
+    'details' => [
+        'original' => ['status' => 'success', 'path' => '...'],
+        'sizes' => [
+            'thumbnail' => ['status' => 'success', 'path' => '...'],
+            // ...
+        ],
+        'deleted_from_appwrite' => true,
+        'deleted_count' => 5,
+        'content_rewrite' => [
+            'posts_updated' => 3,
+            'replacements_made' => 7
+        ]
+    ]
+]
+```
+
+#### File Existence Handling:
+
+If a file already exists locally (with size > 0), it is skipped rather than overwritten.
+
+---
+
+### Compatibility.php — Plugin Compatibility Layer
+
+**Namespace:** `BlitzCDN\Compatibility`
+
+Ensures compatibility with popular WordPress plugins.
+
+#### Current Integrations:
+
+**Elementor:**
+- Clears Elementor's file cache after uploads
+- Prevents stale cached images
+
+```php
+add_action('blitzcdn_upload_complete', [$this, 'clear_elementor_cache']);
+```
+
+---
+
+### Diagnostics.php — System Health Checks
+
+**Namespace:** `BlitzCDN\Diagnostics`
+
+Provides diagnostic information for troubleshooting.
+
+#### Static Methods:
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `get_action_scheduler_diagnostics()` | `array` | Check Action Scheduler setup |
+| `get_pending_actions()` | `array` | List pending scheduled actions |
+| `get_wordpress_cron_diagnostics()` | `array` | Check WP-Cron configuration |
+| `get_migration_status()` | `array` | Get migration status |
+| `generate_report()` | `array` | Full diagnostic report |
+
+#### Diagnostic Report Contents:
+
+- Action Scheduler loaded/initialized
+- Function availability (`as_schedule_single_action`, etc.)
+- WP-Cron disabled/alternate mode
+- Loopback request test
+- Migration status
+- WordPress/PHP versions
+- Debug mode status
+
+---
+
+### CLI.php — WP-CLI Commands
+
+**Namespace:** `BlitzCDN\CLI`
+
+WP-CLI commands for server-side operations.
+
+#### Commands:
+
+```bash
+# Start background migration
+wp blitzcdn migrate
+
+# Start and manually process (for when Action Scheduler fails)
+wp blitzcdn migrate --manual
+
+# Check migration status
+wp blitzcdn status
+
+# Process a single batch manually
+wp blitzcdn process_batch
+
+# Run full diagnostics
+wp blitzcdn diagnostics
+```
+
+#### Manual Migration Mode:
+
+The `--manual` flag processes batches in a loop with 1-second delays, useful when Action Scheduler isn't working.
+
+---
+
+## Admin Components
+
+### Settings.php — Admin Settings Page
+
+**Namespace:** `BlitzCDN\Admin\Settings`
+
+**Menu Location:** Settings → BlitzCDN
+
+#### Registered Settings:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `account_email` | text | Required. User account email for tracking. |
+| `serve_from_cdn` | checkbox | Enable dynamic URL rewriting |
+| `safe_delete` | checkbox | Delete local files after successful upload |
+| `delete_remote` | checkbox | Delete from Appwrite when deleting from WP |
+
+#### Settings Storage:
+
+All settings stored in single option: `blitzcdn_settings`
+
+```php
+$settings = get_option('blitzcdn_settings', []);
+```
+
+#### Conditional Feature Locking:
+
+Migration tools and Goodbye procedure are disabled until `account_email` is configured.
+
+---
+
+### Migrator.php — AJAX Migration Handler
+
+**Namespace:** `BlitzCDN\Admin\Migrator`
+
+Handles all AJAX requests for migration tools.
+
+#### AJAX Actions Registered:
+
+| Action | Method | Description |
+|--------|--------|-------------|
+| `blitzcdn_migrate_batch` | `ajax_migrate_batch()` | Browser migration batch |
+| `blitzcdn_get_migration_stats` | `ajax_get_stats()` | Get pending migration count |
+| `blitzcdn_start_background_migration` | `ajax_start_background_migration()` | Start background migration |
+| `blitzcdn_stop_background_migration` | `ajax_stop_background_migration()` | Stop background migration |
+| `blitzcdn_get_background_status` | `ajax_get_background_status()` | Poll migration status |
+| `blitzcdn_manual_batch_execution` | `ajax_manual_batch_execution()` | Manual batch trigger |
+| `blitzcdn_get_redownload_stats` | `ajax_get_redownload_stats()` | Get goodbye procedure stats |
+| `blitzcdn_redownload_batch` | `ajax_redownload_batch()` | Process goodbye batch |
+
+#### Security:
+
+All AJAX handlers verify:
+1. Nonce: `blitzcdn_migration_nonce`
+2. Capability: `manage_options`
+3. Configuration: `account_email` must be set
+
+---
+
+## Frontend JavaScript
+
+**File:** `assets/js/migration.js`
+
+jQuery-based frontend for migration and goodbye procedure.
+
+#### Components:
+
+1. **Browser-Based Migration**
+   - Button: `#blitzcdn-migrate-btn`
+   - Batch size: 20 attachments
+   - Visual progress bar
+   - Console-style log output
+
+2. **Background Migration Controls**
+   - Start button: `#blitzcdn-background-migrate-btn`
+   - Stop button: `#blitzcdn-stop-background-migrate-btn`
+   - Status polling: every 1 second
+
+3. **Goodbye Procedure**
+   - Button: `#blitzcdn-redownload-btn`
+   - Cancel button: `#blitzcdn-cancel-redownload-btn`
+   - Checkbox: `#blitzcdn-delete-after-redownload`
+   - Batch size: 5 attachments
+   - Stats display (downloaded/skipped/errors)
+
+#### Script Localization:
+
+```php
+wp_localize_script('blitzcdn-migration', 'blitzcdn_migration', [
+    'nonce' => wp_create_nonce('blitzcdn_migration_nonce'),
+    'ajax_url' => admin_url('admin-ajax.php')
+]);
+```
+
+#### Fallback Data Attributes:
+
+Buttons also have `data-nonce` and `data-ajax-url` attributes as fallback.
+
+---
+
+## Configuration
+
+### WordPress Settings
+
+Access via **Settings → BlitzCDN**
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| Account Email | string | `''` | User email for upload tracking |
+| Serve from CDN | bool | `false` | Enable URL rewriting |
+| Safe Delete Local Files | bool | `false` | Delete local after upload |
+| Delete from Appwrite | bool | `false` | Delete remote on WP delete |
+
+### Environment Variables
+
+Create a `.env` file in the plugin root directory:
+
+```env
+# Required
+APPWRITE_PROJECT_ID=your_project_id
+APPWRITE_API_KEY=your_api_key
+APPWRITE_BUCKET_ID=your_bucket_id
+
+# Optional
+APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1
+APPWRITE_CDN_DOMAIN=files.blitzcdn.net
+
+# Database tracking (optional)
+APPWRITE_DB_ID=db
+APPWRITE_COLLECTION_ID=uploads
+```
+
+---
+
+## Data Storage & Metadata
+
+### WordPress Post Meta
+
+| Meta Key | Attachment Scope | Type | Description |
+|----------|------------------|------|-------------|
+| `_blitzcdn_file_id` | Original | `string` | Appwrite file ID |
+| `_blitzcdn_cdn_url` | Original | `string` | Full CDN URL |
+| `_blitzcdn_sizes` | All sizes | `array` | Size metadata |
+
+#### `_blitzcdn_sizes` Schema:
+
+```php
+[
+    'thumbnail' => [
+        'file_id' => 'appwrite-file-id',
+        'url' => 'https://cdn.example.com/storage/buckets/...'
+    ],
+    'medium' => [...],
+    'large' => [...],
+    // ... other registered sizes
+]
+```
+
+### WordPress Options
+
+| Option Name | Type | Description |
+|-------------|------|-------------|
+| `blitzcdn_settings` | `array` | Plugin settings |
+| `blitzcdn_migration_status` | `array` | Background migration state |
+
+### Appwrite Database (Upload Tracking)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `email` | string | User account email |
+| `fileId` | string | Appwrite storage file ID |
+| `originalUrl` | string | Original WordPress URL |
+| `createdAt` | string | ISO 8601 timestamp |
+
+---
+
+## WordPress Hooks Integration
+
+### Filters Used
+
+| Filter | Component | Purpose |
+|--------|-----------|---------|
+| `wp_handle_upload` | UploadHandler | Phase 1 upload |
+| `wp_generate_attachment_metadata` | UploadHandler | Phase 2 upload |
+| `wp_get_attachment_url` | UrlRewriter | Rewrite URLs |
+| `wp_get_attachment_image_src` | UrlRewriter | Rewrite image src |
+| `wp_calculate_image_srcset` | UrlRewriter | Rewrite srcset |
+| `image_downsize` | UrlRewriter | Handle downsizing |
+
+### Actions Used
+
+| Action | Component | Purpose |
+|--------|-----------|---------|
+| `add_attachment` | UploadHandler | Save original metadata |
+| `delete_attachment` | UploadHandler | Delete from Appwrite |
+| `blitzcdn_upload_complete` | Compatibility | Post-upload hooks |
+| `admin_menu` | Settings | Add menu item |
+| `admin_init` | Settings | Register settings |
+| `admin_enqueue_scripts` | Migrator | Load JS |
+
+### Custom Actions Fired
+
+| Action | Parameters | When |
+|--------|------------|------|
+| `blitzcdn_upload_complete` | `$attachment_id` | After successful upload |
+
+---
+
+## Feature Details
+
+### Automatic Media Offloading
+
+1. User uploads file via WordPress Media Library
+2. WordPress saves file to `wp-content/uploads/YYYY/MM/filename.ext`
+3. **Phase 1:** `wp_handle_upload` filter triggers
+   - File uploaded to Appwrite Storage
+   - File ID cached in static property
+   - Tracking document created in Appwrite Database
+4. WordPress creates attachment post
+5. `add_attachment` action triggers
+   - File ID and CDN URL saved to postmeta
+6. WordPress generates image sizes
+7. **Phase 2:** `wp_generate_attachment_metadata` filter triggers
+   - Each size uploaded to Appwrite
+   - Sizes metadata saved to `_blitzcdn_sizes`
+   - Content URLs rewritten
+   - Local files deleted (if enabled)
+
+### URL Rewriting
+
+Two approaches work together:
+
+1. **Dynamic (runtime):** `UrlRewriter` filters attachment URLs when requested
+2. **Static (on upload):** `UploadHandler` rewrites URLs in post content database
+
+### Migration Tools
+
+**Browser-Based:**
+- Runs in user's browser
+- Shows real-time log
+- Requires keeping tab open
+- Batch size: 20
+
+**Background (Action Scheduler):**
+- Runs on server
+- Continues without browser
+- Automatic retry on failure
+- Batch size: 5
+
+### Goodbye Procedure
+
+1. Get all attachments with `_blitzcdn_file_id` meta
+2. For each attachment:
+   - Download original from Appwrite
+   - Download all sizes from Appwrite
+   - Rewrite CDN URLs → local URLs in content
+   - Clear BlitzCDN postmeta
+   - Delete from Appwrite (optional)
+3. URLs now point to local files
+
+### Content URL Rewriting
+
+Both `UploadHandler` (upload) and `Redownloader` (goodbye) include content rewriting:
+
+**Scope:**
+- All public post types
+- Attachment descriptions
+- Post meta values
+
+**Handles:**
+- HTTP/HTTPS variants
+- URL-encoded versions
+- JSON-encoded (Gutenberg blocks)
+
+---
+
+## Plugin Constants
+
+Defined in `blitzcdn.php`:
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `BLITZCDN_VERSION` | `'1.0.0'` | Plugin version |
+| `BLITZCDN_PATH` | Plugin directory path | Absolute filesystem path |
+| `BLITZCDN_URL` | Plugin directory URL | URL for assets |
+| `BLITZCDN_BASENAME` | Plugin basename | For hooks |
+
+---
+
+## AJAX Endpoints
+
+All endpoints require:
+- Nonce: `blitzcdn_migration_nonce`
+- Capability: `manage_options`
+
+| Action | Method | Parameters | Response |
+|--------|--------|------------|----------|
+| `blitzcdn_get_migration_stats` | POST | — | `{total, ids}` |
+| `blitzcdn_migrate_batch` | POST | `ids[]` | `{id: {status, message}}` |
+| `blitzcdn_start_background_migration` | POST | — | `success` |
+| `blitzcdn_stop_background_migration` | POST | — | `success` |
+| `blitzcdn_get_background_status` | POST | — | `{status, processed, total}` |
+| `blitzcdn_manual_batch_execution` | POST | — | `{processed, total, percentage}` |
+| `blitzcdn_get_redownload_stats` | POST | — | `{total, ids}` |
+| `blitzcdn_redownload_batch` | POST | `ids[]`, `delete_from_appwrite` | `{id: {status, message, details}}` |
+
+---
+
+## Error Handling & Logging
+
+### Logging
+
+All errors logged via `error_log()` with `BlitzCDN:` prefix:
+
+```php
+error_log('BlitzCDN Upload Error: ' . $e->getMessage());
+error_log('BlitzCDN Delete Error: ' . $e->getMessage());
+error_log('BlitzCDN Download Error: ' . $e->getMessage());
+error_log('BlitzCDN Migration Error (ID $id): ' . $e->getMessage());
+```
+
+### Graceful Degradation
+
+- Upload failures don't stop WordPress upload
+- Migration errors don't stop batch processing
+- Missing configuration disables features rather than crashing
+
+---
+
+## Debugging
+
+### Enable WordPress Debug Mode
+
+```php
+// wp-config.php
+define('WP_DEBUG', true);
+define('WP_DEBUG_LOG', true);
+define('WP_DEBUG_DISPLAY', false);
+```
+
+Logs written to: `wp-content/debug.log`
+
+### Test Appwrite Database Connection
+
+Run standalone script:
+
+```bash
+php debug-db.php
+```
+
+### WP-CLI Diagnostics
+
+```bash
+wp blitzcdn diagnostics
+```
+
+Outputs:
+- Action Scheduler status
+- WP-Cron configuration
+- Loopback request test
+- Migration status
+
+### Check Action Scheduler
+
+```bash
+wp action-scheduler list --status=pending --hook=blitzcdn_background_migration_batch
+```
+
+---
+
+## License
+
+This plugin is licensed under the GPL-2.0-or-later License.
+
+---
+
+**BlitzCDN** — Media offloading for WordPress, powered by Appwrite.
