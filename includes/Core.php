@@ -53,8 +53,15 @@ class Core {
 
         // Register admin-post handler for Action Scheduler queue runner
         // This allows system cron to trigger Action Scheduler without requiring nonces
+        // Note: Action Scheduler's async request uses admin-ajax.php (wp_ajax_* hooks),
+        // but we support admin-post.php for system cron compatibility
         add_action('admin_post_as_async_request_queue_runner', [$this, 'handle_action_scheduler_queue_runner']);
         add_action('admin_post_nopriv_as_async_request_queue_runner', [$this, 'handle_action_scheduler_queue_runner']);
+        
+        // Also register for admin-ajax.php in case Action Scheduler's async request mechanism is used
+        // This ensures compatibility with both endpoints
+        add_action('wp_ajax_as_async_request_queue_runner', [$this, 'handle_action_scheduler_queue_runner']);
+        add_action('wp_ajax_nopriv_as_async_request_queue_runner', [$this, 'handle_action_scheduler_queue_runner']);
 
         // Initialize Admin Components
         if (is_admin()) {
@@ -124,14 +131,15 @@ class Core {
     }
 
     /**
-     * Handle admin-post request to trigger Action Scheduler queue runner
+     * Handle admin-post/admin-ajax request to trigger Action Scheduler queue runner
      * This allows system cron to trigger Action Scheduler processing
+     * Supports both admin-post.php (for system cron) and admin-ajax.php (for Action Scheduler's async requests)
      * 
      * @return void
      */
     public function handle_action_scheduler_queue_runner() {
-        // Prevent output buffering issues
-        if (ob_get_level()) {
+        // Prevent output buffering issues - clear all nested output buffers
+        while (ob_get_level() > 0) {
             ob_end_clean();
         }
 
@@ -145,13 +153,18 @@ class Core {
             die('Action Scheduler is not available');
         }
 
-        // Check if Action Scheduler is initialized
-        // If not initialized yet, try to initialize it
-        if (!class_exists('ActionScheduler', false) || !ActionScheduler::is_initialized()) {
-            // Action Scheduler should auto-initialize, but if it hasn't, we can't proceed
+        // Check if Action Scheduler is initialized (safely check static method)
+        $is_initialized = false;
+        if (class_exists('ActionScheduler', false) && method_exists('ActionScheduler', 'is_initialized')) {
+            $is_initialized = ActionScheduler::is_initialized();
+        }
+
+        // If not initialized, check if the queue runner hook is available anyway
+        // (Action Scheduler might be partially initialized)
+        if (!$is_initialized && !has_action('action_scheduler_run_queue')) {
             status_header(500);
             header('Content-Type: text/plain');
-            die('Action Scheduler is not initialized');
+            die('Action Scheduler queue runner not available');
         }
 
         try {
