@@ -64,6 +64,24 @@ class Settings {
             'blitzcdn_main_section',
             ['field' => 'delete_remote', 'description' => 'When you delete an image from WordPress, delete it from Appwrite as well.']
         );
+
+        add_settings_field(
+            'migration_batch_size',
+            'Migration Batch Size',
+            [$this, 'render_number_field'],
+            'blitzcdn',
+            'blitzcdn_main_section',
+            ['field' => 'migration_batch_size', 'default' => 20, 'min' => 1, 'max' => 100, 'description' => 'Number of attachments to process per batch in browser migration. Lower values are safer for slower servers. (Default: 20)']
+        );
+
+        add_settings_field(
+            'redownload_batch_size',
+            'Redownload Batch Size',
+            [$this, 'render_number_field'],
+            'blitzcdn',
+            'blitzcdn_main_section',
+            ['field' => 'redownload_batch_size', 'default' => 5, 'min' => 1, 'max' => 50, 'description' => 'Number of attachments to process per batch in goodbye procedure. Downloads are heavier, so default is lower. (Default: 5)']
+        );
     }
 
     public function render_text_field($args) {
@@ -91,6 +109,20 @@ class Settings {
         $checked = checked($value, 1, false);
         $description = $args['description'] ?? '';
         echo "<input type='checkbox' name='blitzcdn_settings[$field]' value='1' $checked>";
+        if ($description) {
+            echo "<p class='description'>$description</p>";
+        }
+    }
+
+    public function render_number_field($args) {
+        $options = get_option('blitzcdn_settings');
+        $field = $args['field'];
+        $default = $args['default'] ?? 1;
+        $value = isset($options[$field]) ? intval($options[$field]) : $default;
+        $min = $args['min'] ?? 1;
+        $max = $args['max'] ?? 1000;
+        $description = $args['description'] ?? '';
+        echo "<input type='number' name='blitzcdn_settings[$field]' value='" . esc_attr($value) . "' min='" . esc_attr($min) . "' max='" . esc_attr($max) . "' class='small-text'>";
         if ($description) {
             echo "<p class='description'>$description</p>";
         }

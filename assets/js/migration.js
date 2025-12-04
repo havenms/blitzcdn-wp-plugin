@@ -46,7 +46,7 @@ if (typeof jQuery === 'undefined') {
         var isMigrating = false;
         var totalItems = 0;
         var processedItems = 0;
-        var batchSize = 20;
+        var batchSize = (typeof blitzcdn_migration !== 'undefined' && blitzcdn_migration.migration_batch_size) ? parseInt(blitzcdn_migration.migration_batch_size, 10) : 20;
         var itemIds = [];
 
         $(document).on('click', '#blitzcdn-migrate-btn', function (e) {
@@ -270,12 +270,12 @@ if (typeof jQuery === 'undefined') {
         // ============================================
         // GOODBYE / REDOWNLOAD Logic
         // ============================================
-        var isRedownloading = false;
-        var redownloadCancelled = false;
-        var redownloadTotalItems = 0;
-        var redownloadProcessedItems = 0;
-        var redownloadBatchSize = 5; // Smaller batch size for downloads (they're heavier)
-        var redownloadItemIds = [];
+    var isRedownloading = false;
+    var redownloadCancelled = false;
+    var redownloadTotalItems = 0;
+    var redownloadProcessedItems = 0;
+    var redownloadBatchSize = (typeof blitzcdn_migration !== 'undefined' && blitzcdn_migration.redownload_batch_size) ? parseInt(blitzcdn_migration.redownload_batch_size, 10) : 5; // Smaller batch size for downloads (they're heavier)
+    var redownloadItemIds = [];
         var redownloadStats = {
             success: 0,
             skipped: 0,

@@ -33,9 +33,21 @@ class Migrator {
         }
 
         wp_enqueue_script('blitzcdn-migration', BLITZCDN_URL . 'assets/js/migration.js', ['jquery'], BLITZCDN_VERSION, true);
+        
+        // Get batch sizes from settings
+        $settings = get_option('blitzcdn_settings', []);
+        $migration_batch_size = isset($settings['migration_batch_size']) ? intval($settings['migration_batch_size']) : 20;
+        $redownload_batch_size = isset($settings['redownload_batch_size']) ? intval($settings['redownload_batch_size']) : 5;
+        
+        // Ensure batch sizes are within reasonable limits
+        $migration_batch_size = max(1, min(100, $migration_batch_size));
+        $redownload_batch_size = max(1, min(50, $redownload_batch_size));
+        
         wp_localize_script('blitzcdn-migration', 'blitzcdn_migration', [
             'nonce' => wp_create_nonce('blitzcdn_migration_nonce'),
-            'ajax_url' => admin_url('admin-ajax.php')
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'migration_batch_size' => $migration_batch_size,
+            'redownload_batch_size' => $redownload_batch_size
         ]);
     }
 
