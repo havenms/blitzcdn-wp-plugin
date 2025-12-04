@@ -51,6 +51,11 @@ class Core {
         // Check Action Scheduler availability
         $this->check_action_scheduler();
 
+        // Register admin-post handler for Action Scheduler queue runner
+        // This allows system cron to trigger Action Scheduler without requiring nonces
+        add_action('admin_post_as_async_request_queue_runner', [$this, 'handle_action_scheduler_queue_runner']);
+        add_action('admin_post_nopriv_as_async_request_queue_runner', [$this, 'handle_action_scheduler_queue_runner']);
+
         // Initialize Admin Components
         if (is_admin()) {
             new Settings();
@@ -116,5 +121,61 @@ class Core {
 
     public function get_redownloader() {
         return $this->redownloader;
+    }
+
+    /**
+     * Handle admin-post request to trigger Action Scheduler queue runner
+     * This allows system cron to trigger Action Scheduler processing
+     * 
+     * @return void
+     */
+    public function handle_action_scheduler_queue_runner() {
+        // Prevent output buffering issues
+        if (ob_get_level()) {
+            ob_end_clean();
+        }
+
+        // Ensure Action Scheduler is loaded (in case it wasn't loaded yet)
+        $this->load_action_scheduler();
+
+        // Check if Action Scheduler is available
+        if (!function_exists('as_get_scheduled_actions') || !class_exists('ActionScheduler_Store')) {
+            status_header(500);
+            header('Content-Type: text/plain');
+            die('Action Scheduler is not available');
+        }
+
+        // Check if Action Scheduler is initialized
+        // If not initialized yet, try to initialize it
+        if (!class_exists('ActionScheduler', false) || !ActionScheduler::is_initialized()) {
+            // Action Scheduler should auto-initialize, but if it hasn't, we can't proceed
+            status_header(500);
+            header('Content-Type: text/plain');
+            die('Action Scheduler is not initialized');
+        }
+
+        try {
+            // Trigger the queue runner
+            // This is the same action that Action Scheduler's async request uses
+            do_action('action_scheduler_run_queue', 'Admin Post Request');
+
+            // Return success response
+            status_header(200);
+            header('Content-Type: text/plain');
+            echo 'OK';
+            exit;
+        } catch (\Exception $e) {
+            // Log error but don't expose details to prevent information leakage
+            error_log('BlitzCDN: Action Scheduler queue runner error: ' . $e->getMessage());
+            status_header(500);
+            header('Content-Type: text/plain');
+            die('Error processing queue');
+        } catch (\Error $e) {
+            // Also catch fatal errors (PHP 7+)
+            error_log('BlitzCDN: Action Scheduler queue runner fatal error: ' . $e->getMessage());
+            status_header(500);
+            header('Content-Type: text/plain');
+            die('Error processing queue');
+        }
     }
 }
