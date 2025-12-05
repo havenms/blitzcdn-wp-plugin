@@ -6,6 +6,7 @@ class UploadHandler {
 
     private $appwrite_client;
     private static $uploaded_files = []; // Cache for Phase 1 uploads: path => file_id
+    private static $pending_deletions = []; // Track files pending deletion: attachment_id => metadata
 
     public function __construct(AppwriteClient $client) {
         $this->appwrite_client = $client;
@@ -21,6 +22,9 @@ class UploadHandler {
 
         // Handle Deletion
         add_action('delete_attachment', [$this, 'handle_delete_attachment']);
+
+        // Deferred safe delete - runs after WordPress finishes processing the request
+        add_action('shutdown', [$this, 'process_pending_deletions'], 999);
     }
 
     /**
@@ -228,12 +232,13 @@ class UploadHandler {
             }
         }
 
-        // Safe Delete Logic
+        // Safe Delete Logic - Defer to shutdown hook to ensure WordPress has finished processing
         $settings = get_option('blitzcdn_settings', []);
         $safe_delete = $settings['safe_delete'] ?? false;
 
         if ($safe_delete && $all_uploads_successful) {
-            $this->safe_delete_local_files($attachment_id, $metadata);
+            // Store deletion request to process after WordPress finishes
+            self::$pending_deletions[$attachment_id] = $metadata;
         }
 
         do_action('blitzcdn_upload_complete', $attachment_id);
@@ -283,27 +288,114 @@ class UploadHandler {
         return $url;
     }
 
+    /**
+     * Process pending file deletions on shutdown hook.
+     * This ensures WordPress has completely finished processing attachments before deletion.
+     * 
+     * Fetches current metadata from WordPress to include any files generated after Phase 2.
+     */
+    public function process_pending_deletions() {
+        if (empty(self::$pending_deletions)) {
+            return;
+        }
+
+        foreach (self::$pending_deletions as $attachment_id => $stored_metadata) {
+            // Fetch current metadata from WordPress to get any files generated after Phase 2
+            $current_metadata = wp_get_attachment_metadata($attachment_id);
+            
+            // Fallback to stored metadata if current metadata is unavailable
+            if (empty($current_metadata) || !is_array($current_metadata)) {
+                $current_metadata = $stored_metadata;
+            }
+            
+            $this->safe_delete_local_files($attachment_id, $current_metadata);
+        }
+
+        // Clear pending deletions after processing
+        self::$pending_deletions = [];
+    }
+
+    /**
+     * Safely delete local files after successful upload to CDN.
+     * 
+     * @param int $attachment_id WordPress attachment ID
+     * @param array $metadata Attachment metadata from WordPress
+     */
     private function safe_delete_local_files($attachment_id, $metadata) {
+        $settings = get_option('blitzcdn_settings', []);
+        $safe_delete = $settings['safe_delete'] ?? false;
+
+        // Double-check safe delete is still enabled (in case settings changed)
+        if (!$safe_delete) {
+            return;
+        }
+
+        // Verify all uploads succeeded by checking metadata exists
+        $file_id = get_post_meta($attachment_id, '_blitzcdn_file_id', true);
+        $sizes_meta = get_post_meta($attachment_id, '_blitzcdn_sizes', true);
+
+        if (!$file_id) {
+            error_log("BlitzCDN: Safe delete skipped for attachment $attachment_id - no CDN file ID found");
+            return;
+        }
+
         $upload_dir = wp_upload_dir();
         $base_dir = $upload_dir['basedir'];
         $file = get_post_meta($attachment_id, '_wp_attached_file', true);
-        $subdir = dirname($file);
 
-        // Delete original
-        $original_path = path_join($base_dir, $file);
-        if (file_exists($original_path)) {
-            unlink($original_path);
+        if (empty($file)) {
+            error_log("BlitzCDN: Safe delete skipped for attachment $attachment_id - no attached file path found");
+            return;
         }
 
-        // Delete sizes
-        if (isset($metadata['sizes']) && is_array($metadata['sizes'])) {
-            foreach ($metadata['sizes'] as $size_info) {
+        $subdir = dirname($file);
+        $deleted_count = 0;
+        $errors = [];
+
+        // Delete original file
+        $original_path = path_join($base_dir, $file);
+        if (file_exists($original_path)) {
+            if (@unlink($original_path)) {
+                $deleted_count++;
+            } else {
+                $errors[] = "Failed to delete original: $original_path";
+            }
+        }
+
+        // Delete size files - only delete sizes that were successfully uploaded to CDN
+        // This prevents deleting files that were generated but not uploaded
+        if (isset($metadata['sizes']) && is_array($metadata['sizes']) && is_array($sizes_meta)) {
+            // Build a set of size names that were successfully uploaded to CDN
+            $uploaded_size_names = array_keys($sizes_meta);
+            
+            foreach ($metadata['sizes'] as $size_name => $size_info) {
+                // Only delete if this size was successfully uploaded to CDN
+                if (!in_array($size_name, $uploaded_size_names, true)) {
+                    continue;
+                }
+                
+                if (!isset($size_info['file'])) {
+                    continue;
+                }
+
                 $file_name = $size_info['file'];
                 $file_path = path_join($base_dir, path_join($subdir, $file_name));
+
                 if (file_exists($file_path)) {
-                    unlink($file_path);
+                    if (@unlink($file_path)) {
+                        $deleted_count++;
+                    } else {
+                        $errors[] = "Failed to delete size: $file_path";
+                    }
                 }
             }
+        }
+
+        // Log results
+        if (!empty($errors)) {
+            error_log("BlitzCDN: Safe delete completed for attachment $attachment_id with errors: " . implode(', ', $errors));
+        } elseif ($deleted_count > 0) {
+            error_log("BlitzCDN: Safe delete completed for attachment $attachment_id - deleted $deleted_count file(s)");
         }
     }
 
