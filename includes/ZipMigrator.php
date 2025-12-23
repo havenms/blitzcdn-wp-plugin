@@ -522,7 +522,8 @@ class ZipMigrator {
         return [
             'success' => true,
             'migration_id' => $zip_result['migration_id'],
-            'attachment_count' => count($attachment_ids),
+            // Report the number of attachments actually included in the zip (after capping files)
+            'attachment_count' => isset($zip_result['metadata']['attachments']) ? count($zip_result['metadata']['attachments']) : count($attachment_ids),
             'files_added' => $zip_result['files_added'],
             'status' => 'processing',
             'message' => 'Migration started. Waiting for middleware to process files.',

@@ -124,7 +124,7 @@ class Settings {
             [$this, 'render_number_field'],
             'blitzcdn',
             'blitzcdn_zip_migration_section',
-            ['field' => 'zip_batch_size', 'default' => 100, 'min' => 10, 'max' => 500, 'description' => 'Maximum number of attachments to include per zip file. Larger batches are more efficient but create larger files. (Default: 100)']
+            ['field' => 'zip_batch_size', 'default' => 100, 'min' => 1, 'max' => 10000, 'description' => 'Maximum number of attachments to include per zip file. Note: each attachment may contain multiple assets (original + sizes). The system enforces a hard cap of 10,000 files (originals + sizes) per zip to keep processing stable. (Default: 100)']
         );
     }
 
