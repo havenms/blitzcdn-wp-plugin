@@ -44,8 +44,10 @@ if (typeof jQuery === 'undefined') {
         // MIGRATION (Upload to CDN) Logic
         // ============================================
         var isMigrating = false;
-        var totalItems = 0;
-        var processedItems = 0;
+        var totalItems = 0; // Total images
+        var totalAssets = 0; // Total assets (images * ~4)
+        var processedItems = 0; // Processed images
+        var processedAssets = 0; // Processed assets
         var batchSize = (typeof blitzcdn_migration !== 'undefined' && blitzcdn_migration.migration_batch_size) ? parseInt(blitzcdn_migration.migration_batch_size, 10) : 20;
         var itemIds = [];
 
@@ -72,11 +74,14 @@ if (typeof jQuery === 'undefined') {
                 action: 'blitzcdn_get_migration_stats'
             }, function (response) {
                 if (response.success) {
-                    totalItems = response.data.total;
+                    totalAssets = response.data.total; // Total assets (original + sizes)
+                    totalItems = response.data.total_images || response.data.ids.length; // Total images for reference
                     itemIds = response.data.ids.slice(); // Clone array
-                    log('Found ' + totalItems + ' items to migrate.', 'info');
+                    processedAssets = 0;
+                    processedItems = 0;
+                    log('Found ' + totalItems + ' images (' + totalAssets + ' assets) to migrate.', 'info');
 
-                    if (totalItems > 0) {
+                    if (totalAssets > 0) {
                         processBatch();
                     } else {
                         finishMigration();
@@ -107,20 +112,29 @@ if (typeof jQuery === 'undefined') {
                 ids: batch
             }, function (response) {
                 processedItems += batch.length;
-                updateProgress();
-
+                
+                // Count assets processed in this batch
                 if (response.success) {
                     $.each(response.data, function (id, result) {
                         var attachmentLink = '<a href="' + window.location.origin + '/wp-admin/post.php?post=' + id + '&action=edit" target="_blank">#' + id + '</a>';
                         if (result.status === 'success') {
-                            log(attachmentLink + ': Success', 'success');
+                            // Add assets count for this image (default to 4 if not provided)
+                            var assetsInImage = result.assets_count || 4;
+                            processedAssets += assetsInImage;
+                            log(attachmentLink + ': Success (' + assetsInImage + ' assets)', 'success');
                         } else {
+                            // On error, still count as 1 asset to avoid progress issues
+                            processedAssets += 1;
                             log(attachmentLink + ': Failed - ' + result.message, 'error');
                         }
                     });
                 } else {
+                    // On batch failure, count each image as 4 assets (typical)
+                    processedAssets += batch.length * 4;
                     log('Batch failed: ' + (response.data || 'Unknown error'), 'error');
                 }
+                
+                updateProgress();
 
                 // Continue to next batch (with small delay to prevent overwhelming server and allow UI updates)
                 setTimeout(function () {
@@ -129,6 +143,8 @@ if (typeof jQuery === 'undefined') {
             }).fail(function (xhr, status, error) {
                 log('Network error processing batch: ' + error, 'error');
                 processedItems += batch.length;
+                // On network error, estimate assets (4 per image)
+                processedAssets += batch.length * 4;
                 updateProgress();
 
                 // Try to continue with remaining items
@@ -139,10 +155,11 @@ if (typeof jQuery === 'undefined') {
         }
 
         function updateProgress() {
-            var percent = totalItems > 0 ? Math.round((processedItems / totalItems) * 100) : 0;
+            // Use asset count for progress, not image count
+            var percent = totalAssets > 0 ? Math.round((processedAssets / totalAssets) * 100) : 0;
             if (percent > 100) percent = 100;
             $('#blitzcdn-progress-bar').css('width', percent + '%');
-            $('#blitzcdn-progress-text').text(percent + '% (' + processedItems + '/' + totalItems + ' items processed)');
+            $('#blitzcdn-progress-text').text(percent + '% (' + processedAssets + '/' + totalAssets + ' assets processed, ' + processedItems + '/' + totalItems + ' images)');
         }
 
         function finishMigration() {
@@ -154,10 +171,10 @@ if (typeof jQuery === 'undefined') {
             log('----------------------------------------', 'info');
             log('MIGRATION COMPLETE', 'info');
             log('----------------------------------------', 'info');
-            log('Processed: ' + processedItems + ' / ' + totalItems + ' items', 'success');
+            log('Processed: ' + processedAssets + ' / ' + totalAssets + ' assets (' + processedItems + ' / ' + totalItems + ' images)', 'success');
 
             // Show completion alert
-            alert('Migration complete! Processed ' + processedItems + ' / ' + totalItems + ' items.');
+            alert('Migration complete! Processed ' + processedAssets + ' / ' + totalAssets + ' assets (' + processedItems + ' / ' + totalItems + ' images).');
         }
 
         function log(message, type) {
@@ -217,8 +234,18 @@ if (typeof jQuery === 'undefined') {
                 $('#blitzcdn-background-status').show();
                 $('#blitzcdn-background-migrate-btn').hide();
                 $('#blitzcdn-stop-background-migrate-btn').show();
-                $('#blitzcdn-bg-processed').text(status.processed);
-                $('#blitzcdn-bg-total').text(status.total);
+                // Show assets count (processed/total assets)
+                var processedText = status.processed || 0;
+                var totalText = status.total || 0;
+                if (status.processed_images !== undefined && status.total_images !== undefined) {
+                    processedText += ' assets (' + status.processed_images + ' images)';
+                    totalText += ' assets (' + status.total_images + ' images)';
+                } else {
+                    processedText += ' assets';
+                    totalText += ' assets';
+                }
+                $('#blitzcdn-bg-processed').text(processedText);
+                $('#blitzcdn-bg-total').text(totalText);
 
                 if (!bgPollInterval) {
                     bgPollInterval = setInterval(checkBackgroundStatus, 1000); // Poll every 1 second for better reactivity
@@ -229,8 +256,17 @@ if (typeof jQuery === 'undefined') {
                 $('#blitzcdn-stop-background-migrate-btn').hide();
                 if (status.completed_time) {
                     $('#blitzcdn-bg-status-text').text('Completed at ' + new Date(status.completed_time * 1000).toLocaleTimeString());
-                    $('#blitzcdn-bg-processed').text(status.processed);
-                    $('#blitzcdn-bg-total').text(status.total);
+                    var processedText = status.processed || 0;
+                    var totalText = status.total || 0;
+                    if (status.processed_images !== undefined && status.total_images !== undefined) {
+                        processedText += ' assets (' + status.processed_images + ' images)';
+                        totalText += ' assets (' + status.total_images + ' images)';
+                    } else {
+                        processedText += ' assets';
+                        totalText += ' assets';
+                    }
+                    $('#blitzcdn-bg-processed').text(processedText);
+                    $('#blitzcdn-bg-total').text(totalText);
                 }
 
                 if (bgPollInterval) {
@@ -272,8 +308,10 @@ if (typeof jQuery === 'undefined') {
         // ============================================
     var isRedownloading = false;
     var redownloadCancelled = false;
-    var redownloadTotalItems = 0;
-    var redownloadProcessedItems = 0;
+    var redownloadTotalItems = 0; // Total images
+    var redownloadTotalAssets = 0; // Total assets (images * ~4)
+    var redownloadProcessedItems = 0; // Processed images
+    var redownloadProcessedAssets = 0; // Processed assets
     var redownloadBatchSize = (typeof blitzcdn_migration !== 'undefined' && blitzcdn_migration.redownload_batch_size) ? parseInt(blitzcdn_migration.redownload_batch_size, 10) : 5; // Smaller batch size for downloads (they're heavier)
     var redownloadItemIds = [];
         var redownloadStats = {
@@ -327,6 +365,7 @@ if (typeof jQuery === 'undefined') {
             isRedownloading = true;
             redownloadCancelled = false;
             redownloadProcessedItems = 0;
+            redownloadProcessedAssets = 0;
             redownloadStats = { success: 0, skipped: 0, errors: 0 };
 
             // Update UI
@@ -351,16 +390,17 @@ if (typeof jQuery === 'undefined') {
             }, function (response) {
                 console.debug('BlitzCDN: Redownload stats response:', response);
                 if (response.success) {
-                    redownloadTotalItems = response.data.total;
+                    redownloadTotalAssets = response.data.total; // Total assets (original + sizes)
+                    redownloadTotalItems = response.data.total_images || response.data.ids.length; // Total images for reference
                     redownloadItemIds = response.data.ids.slice(); // Clone array
 
-                    if (redownloadTotalItems === 0) {
+                    if (redownloadTotalAssets === 0) {
                         redownloadLog('No items found with BlitzCDN metadata. Nothing to redownload.', 'success');
                         finishRedownload();
                         return;
                     }
 
-                    redownloadLog('Found ' + redownloadTotalItems + ' attachments to process', 'info');
+                    redownloadLog('Found ' + redownloadTotalItems + ' images (' + redownloadTotalAssets + ' assets) to process', 'info');
                     processRedownloadBatch(deleteFromAppwrite);
                 } else {
                     console.error('BlitzCDN: Failed to get redownload stats:', response);
@@ -396,11 +436,17 @@ if (typeof jQuery === 'undefined') {
                 delete_from_appwrite: deleteFromAppwrite ? 'true' : 'false'
             }, function (response) {
                 redownloadProcessedItems += batch.length;
-                updateRedownloadProgress();
 
                 if (response.success) {
                     $.each(response.data, function (id, result) {
                         var attachmentLink = '<a href="' + window.location.origin + '/wp-admin/post.php?post=' + id + '&action=edit" target="_blank">#' + id + '</a>';
+
+                        // Count assets processed for this attachment
+                        var assetsInImage = 1; // Original
+                        if (result.details && result.details.sizes) {
+                            assetsInImage += Object.keys(result.details.sizes).length;
+                        }
+                        redownloadProcessedAssets += assetsInImage;
 
                         // Check if original file already existed locally
                         var originalAlreadyExists = result.details && result.details.original && result.details.original.status === 'exists';
@@ -409,10 +455,10 @@ if (typeof jQuery === 'undefined') {
                             if (originalAlreadyExists) {
                                 // File was already local - count as skipped, not success
                                 redownloadStats.skipped++;
-                                redownloadLog(attachmentLink + ': Already exists locally (metadata cleared)', 'info');
+                                redownloadLog(attachmentLink + ': Already exists locally (metadata cleared) - ' + assetsInImage + ' assets', 'info');
                             } else {
                                 redownloadStats.success++;
-                                var msg = attachmentLink + ': ' + result.message;
+                                var msg = attachmentLink + ': ' + result.message + ' (' + assetsInImage + ' assets)';
                                 if (result.details && result.details.deleted_from_appwrite) {
                                     msg += ' (Deleted ' + result.details.deleted_count + ' from Appwrite)';
                                 }
@@ -420,7 +466,7 @@ if (typeof jQuery === 'undefined') {
                             }
                         } else if (result.status === 'partial') {
                             redownloadStats.errors++;
-                            redownloadLog(attachmentLink + ': ' + result.message, 'warning');
+                            redownloadLog(attachmentLink + ': ' + result.message + ' (' + assetsInImage + ' assets)', 'warning');
                             logDetailedResults(id, result.details);
                         } else if (result.status === 'error') {
                             redownloadStats.errors++;
@@ -430,8 +476,11 @@ if (typeof jQuery === 'undefined') {
                 } else {
                     redownloadLog('Batch failed: ' + (response.data || 'Unknown error'), 'error');
                     redownloadStats.errors += batch.length;
+                    // Estimate assets (4 per image) on batch failure
+                    redownloadProcessedAssets += batch.length * 4;
                 }
 
+                updateRedownloadProgress();
                 updateRedownloadStats();
 
                 // Continue to next batch (with small delay to prevent overwhelming server)
@@ -446,6 +495,8 @@ if (typeof jQuery === 'undefined') {
 
                 // Try to continue with remaining items
                 redownloadProcessedItems += batch.length;
+                // Estimate assets (4 per image) on network error
+                redownloadProcessedAssets += batch.length * 4;
                 updateRedownloadProgress();
 
                 setTimeout(function () {
@@ -479,11 +530,12 @@ if (typeof jQuery === 'undefined') {
         }
 
         function updateRedownloadProgress() {
-            var percent = redownloadTotalItems > 0 ? Math.round((redownloadProcessedItems / redownloadTotalItems) * 100) : 0;
+            // Use asset count for progress, not image count
+            var percent = redownloadTotalAssets > 0 ? Math.round((redownloadProcessedAssets / redownloadTotalAssets) * 100) : 0;
             if (percent > 100) percent = 100;
 
             $('#blitzcdn-redownload-progress-bar').css('width', percent + '%');
-            $('#blitzcdn-redownload-progress-text').text(percent + '% (' + redownloadProcessedItems + '/' + redownloadTotalItems + ' attachments processed)');
+            $('#blitzcdn-redownload-progress-text').text(percent + '% (' + redownloadProcessedAssets + '/' + redownloadTotalAssets + ' assets processed, ' + redownloadProcessedItems + '/' + redownloadTotalItems + ' images)');
         }
 
         function updateRedownloadStats() {
@@ -505,6 +557,7 @@ if (typeof jQuery === 'undefined') {
             redownloadLog('----------------------------------------', 'info');
             redownloadLog('GOODBYE PROCEDURE COMPLETE', 'info');
             redownloadLog('----------------------------------------', 'info');
+            redownloadLog('Processed: ' + redownloadProcessedAssets + ' / ' + redownloadTotalAssets + ' assets (' + redownloadProcessedItems + ' / ' + redownloadTotalItems + ' images)', 'success');
             redownloadLog('Downloaded: ' + redownloadStats.success + ' attachments', 'success');
             redownloadLog('Already Local: ' + redownloadStats.skipped + ' attachments', 'info');
             redownloadLog('Errors: ' + redownloadStats.errors + ' attachments', redownloadStats.errors > 0 ? 'error' : 'info');

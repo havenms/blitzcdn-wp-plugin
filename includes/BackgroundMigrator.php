@@ -20,11 +20,18 @@ class BackgroundMigrator {
             return false;
         }
 
+        // Get image IDs to calculate total assets
+        $ids = $this->get_batch_ids(999999); // Get all IDs
+        $total_assets = Core::count_total_assets($ids);
+        $total_images = count($ids);
+
         // Reset status
         update_option(self::OPTION_STATUS, [
             'status' => 'running',
-            'processed' => 0,
-            'total' => $this->get_total_items(),
+            'processed' => 0, // Processed assets
+            'processed_images' => 0, // Processed images (for reference)
+            'total' => $total_assets, // Total assets
+            'total_images' => $total_images, // Total images (for reference)
             'start_time' => time(),
         ]);
 
@@ -86,6 +93,7 @@ class BackgroundMigrator {
             $status['status'] = 'completed';
             $status['completed_time'] = time();
             $status['processed'] = $status['total']; // Ensure 100%
+            $status['processed_images'] = $status['total_images'] ?? 0; // Ensure images are also complete
             update_option(self::OPTION_STATUS, $status);
             return;
         }
@@ -97,16 +105,20 @@ class BackgroundMigrator {
             if ($metadata) {
                 try {
                     $upload_handler->handle_upload_phase_2($metadata, $id);
-                    // Update processed count on success
-                    $status['processed']++;
+                    // Count assets processed for this attachment
+                    $assets_count = Core::count_assets_per_attachment($id);
+                    $status['processed'] += $assets_count;
+                    $status['processed_images']++;
                 } catch (\Exception $e) {
                     error_log("BlitzCDN Migration Error (ID $id): " . $e->getMessage());
-                    // Still increment processed to avoid getting stuck on problematic items
+                    // On error, count as 1 asset to avoid progress issues
                     $status['processed']++;
+                    $status['processed_images']++;
                 }
             } else {
-                // No metadata, skip but count as processed
+                // No metadata, skip but count as 1 asset processed
                 $status['processed']++;
+                $status['processed_images']++;
             }
         }
 
@@ -145,12 +157,16 @@ class BackgroundMigrator {
             'success' => true,
             'processed' => $updated_status['processed'],
             'total' => $updated_status['total'],
+            'processed_images' => $updated_status['processed_images'] ?? 0,
+            'total_images' => $updated_status['total_images'] ?? 0,
             'percentage' => $updated_status['total'] > 0 ? round(($updated_status['processed'] / $updated_status['total']) * 100, 2) : 0,
             'status' => $updated_status['status']
         ];
     }
 
     private function get_total_items() {
+        // This method is deprecated - use get_total_assets() instead
+        // Keeping for backward compatibility but it now returns asset count
         $query = new \WP_Query([
             'post_type' => 'attachment',
             'post_status' => 'inherit',
@@ -163,7 +179,8 @@ class BackgroundMigrator {
                 ]
             ]
         ]);
-        return $query->found_posts;
+        $ids = $query->posts;
+        return Core::count_total_assets($ids);
     }
 
     private function get_batch_ids($limit) {

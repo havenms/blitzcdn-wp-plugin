@@ -71,8 +71,17 @@ class Migrator {
             ]
         ]);
 
-        $total = $query->found_posts;
-        wp_send_json_success(['total' => $total, 'ids' => $query->posts]);
+        $image_count = $query->found_posts;
+        $ids = $query->posts;
+        
+        // Count total assets (original + sizes) instead of just images
+        $total_assets = \BlitzCDN\Core::count_total_assets($ids);
+        
+        wp_send_json_success([
+            'total' => $total_assets, // Total assets, not images
+            'total_images' => $image_count, // Keep image count for reference
+            'ids' => $ids
+        ]);
     }
 
     public function ajax_migrate_batch() {
@@ -110,6 +119,9 @@ class Migrator {
                 
                 $new_metadata = $upload_handler->handle_upload_phase_2($metadata, $id);
                 
+                // Count assets processed for this attachment
+                $assets_count = Core::count_assets_per_attachment($id);
+                
                 // We don't strictly need to update metadata if handle_upload_phase_2 only modifies side-effects (postmeta),
                 // but it returns metadata, and sometimes plugins modify it.
                 // In our case, handle_upload_phase_2 modifies postmeta directly for BlitzCDN fields.
@@ -117,7 +129,10 @@ class Migrator {
                 // So we might not need wp_update_attachment_metadata unless we changed something inside $metadata.
                 // But let's be safe.
                 
-                $results[$id] = ['status' => 'success'];
+                $results[$id] = [
+                    'status' => 'success',
+                    'assets_count' => $assets_count // Return asset count for progress tracking
+                ];
             } catch (\Exception $e) {
                 $results[$id] = ['status' => 'error', 'message' => $e->getMessage()];
             }
@@ -204,6 +219,11 @@ class Migrator {
 
         $redownloader = Core::get_instance()->get_redownloader();
         $stats = $redownloader->get_redownload_stats();
+        
+        // Count total assets (original + sizes) instead of just images
+        $total_assets = Core::count_total_assets($stats['ids']);
+        $stats['total'] = $total_assets; // Override with asset count
+        $stats['total_images'] = count($stats['ids']); // Keep image count for reference
 
         wp_send_json_success($stats);
     }

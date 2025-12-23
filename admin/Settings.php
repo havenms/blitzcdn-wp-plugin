@@ -171,6 +171,16 @@ class Settings {
             <?php else: ?>
                 <p style="color: #28a745; font-weight: 500;">✓ Account email configured: <code><?php echo esc_html($account_email); ?></code></p>
                 <p>Migrate existing media to Appwrite.</p>
+                
+                <div style="background: #e7f3ff; border-left: 4px solid #2271b1; padding: 12px; margin: 15px 0; border-radius: 4px;">
+                    <p style="margin: 0 0 8px 0; color: #333; font-weight: 500;">
+                        <strong>📊 Understanding Progress Tracking</strong>
+                    </p>
+                    <p style="margin: 0; color: #555; font-size: 13px; line-height: 1.6;">
+                        Each image in your media library has multiple sizes that need to be uploaded separately: the original file plus generated sizes (thumbnail, medium, large, etc.). Each of these files—the original and each size—is counted as an <strong>asset</strong>. The progress bar shows the total number of assets being processed, not just the number of images. For example, if you have 100 images, you might see progress tracking 400 assets (100 images × 4 assets each on average).
+                    </p>
+                </div>
+                
                 <p>
                     <button type="button" id="blitzcdn-migrate-btn" class="button button-secondary" data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>" data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">Migrate Existing Media (Browser)</button>
                     <button type="button" id="blitzcdn-background-migrate-btn" class="button button-primary" data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>" data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">Start Background Migration</button>

@@ -284,7 +284,7 @@ function App({ email }: { email: string }) {
             {phase === 'fetching' && (
                 <Box flexDirection="column">
                     <Text color="yellow">📊 Fetching file information...</Text>
-                    <Text color="gray">   Found {stats.total} file(s)</Text>
+                    <Text color="gray">   Found {stats.total} asset(s)</Text>
                     {stats.totalSize > 0 && (
                         <Text color="gray">   Total size: {formatFileSize(stats.totalSize)}</Text>
                     )}
@@ -302,6 +302,7 @@ function App({ email }: { email: string }) {
                             <Text color="green">✓ Deleted:</Text> <Text color="white" bold>{stats.deleted}</Text>
                             <Text color="gray"> / </Text>
                             <Text color="white">{stats.total}</Text>
+                            <Text color="gray"> assets</Text>
                         </Text>
                         {stats.failed > 0 && (
                             <Text>
@@ -322,11 +323,11 @@ function App({ email }: { email: string }) {
                     <Text color="green" bold>✓ Deletion Complete!</Text>
                     <Box marginTop={1} flexDirection="column">
                         <Text>
-                            <Text color="green">✓ Successfully deleted:</Text> <Text color="white" bold>{stats.deleted}</Text> <Text color="gray">files</Text>
+                            <Text color="green">✓ Successfully deleted:</Text> <Text color="white" bold>{stats.deleted}</Text> <Text color="gray">assets</Text>
                         </Text>
                         {stats.failed > 0 && (
                             <Text>
-                                <Text color="red">✗ Failed:</Text> <Text color="white" bold>{stats.failed}</Text> <Text color="gray">files</Text>
+                                <Text color="red">✗ Failed:</Text> <Text color="white" bold>{stats.failed}</Text> <Text color="gray">assets</Text>
                             </Text>
                         )}
                         {stats.totalSize > 0 && (

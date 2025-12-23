@@ -46,7 +46,12 @@ if (defined('WP_CLI') && WP_CLI) {
             $status = $background_migrator->get_status();
 
             \WP_CLI::line("Status: {$status['status']}");
-            \WP_CLI::line("Processed: {$status['processed']} / {$status['total']}");
+            \WP_CLI::line("Processed: {$status['processed']} / {$status['total']} assets");
+            
+            // Show image count if available
+            if (isset($status['processed_images']) && isset($status['total_images'])) {
+                \WP_CLI::line("Images: {$status['processed_images']} / {$status['total_images']}");
+            }
             
             if ($status['total'] > 0) {
                 $percentage = round(($status['processed'] / $status['total']) * 100, 2);
@@ -66,7 +71,10 @@ if (defined('WP_CLI') && WP_CLI) {
             if (isset($result['error'])) {
                 \WP_CLI::error($result['error']);
             } else {
-                \WP_CLI::line("Processed: {$result['processed']} / {$result['total']} ({$result['percentage']}%)");
+                \WP_CLI::line("Processed: {$result['processed']} / {$result['total']} assets ({$result['percentage']}%)");
+                if (isset($result['processed_images']) && isset($result['total_images'])) {
+                    \WP_CLI::line("Images: {$result['processed_images']} / {$result['total_images']}");
+                }
                 if ($result['status'] === 'completed') {
                     \WP_CLI::success('Migration completed!');
                 }
@@ -120,10 +128,15 @@ if (defined('WP_CLI') && WP_CLI) {
                 }
 
                 $batch_count++;
-                \WP_CLI::log("Batch {$batch_count}: {$result['processed']} / {$result['total']} ({$result['percentage']}%)");
+                \WP_CLI::log("Batch {$batch_count}: {$result['processed']} / {$result['total']} assets ({$result['percentage']}%)");
+                
+                // Show image count if available
+                if (isset($result['processed_images']) && isset($result['total_images'])) {
+                    \WP_CLI::log("  Images: {$result['processed_images']} / {$result['total_images']}");
+                }
 
                 if ($result['status'] === 'completed') {
-                    \WP_CLI::success("Migration completed! Processed {$result['total']} attachments in {$batch_count} batches.");
+                    \WP_CLI::success("Migration completed! Processed {$result['total']} assets in {$batch_count} batches.");
                     break;
                 }
 

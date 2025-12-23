@@ -143,6 +143,39 @@ class Core {
     }
 
     /**
+     * Count the number of assets (original + sizes) for an attachment.
+     * Each image typically has 1 original + 3 sizes (thumbnail, medium, large) = 4 assets.
+     * 
+     * @param int $attachment_id WordPress attachment ID
+     * @return int Number of assets (1 for original + count of sizes)
+     */
+    public static function count_assets_per_attachment($attachment_id) {
+        $metadata = wp_get_attachment_metadata($attachment_id);
+        if (!$metadata) {
+            // If no metadata, assume at least original file exists
+            return 1;
+        }
+        
+        // Count original (always 1) + sizes
+        $size_count = isset($metadata['sizes']) && is_array($metadata['sizes']) ? count($metadata['sizes']) : 0;
+        return 1 + $size_count; // Original + sizes
+    }
+
+    /**
+     * Count total assets for multiple attachments.
+     * 
+     * @param array $attachment_ids Array of attachment IDs
+     * @return int Total number of assets across all attachments
+     */
+    public static function count_total_assets($attachment_ids) {
+        $total = 0;
+        foreach ($attachment_ids as $id) {
+            $total += self::count_assets_per_attachment($id);
+        }
+        return $total;
+    }
+
+    /**
      * Handle admin-post/admin-ajax request to trigger Action Scheduler queue runner
      * This allows system cron to trigger Action Scheduler processing
      * Supports both admin-post.php (for system cron) and admin-ajax.php (for Action Scheduler's async requests)
