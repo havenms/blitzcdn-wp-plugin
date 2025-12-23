@@ -82,6 +82,54 @@ class Settings {
             'blitzcdn_main_section',
             ['field' => 'redownload_batch_size', 'default' => 5, 'min' => 1, 'max' => 50, 'description' => 'Number of attachments to process per batch in goodbye procedure. Downloads are heavier, so default is lower. (Default: 5)']
         );
+
+        // Zip Migration Settings Section
+        add_settings_section(
+            'blitzcdn_zip_migration_section',
+            'Fast Migration (Zip-based)',
+            [$this, 'render_zip_migration_section_description'],
+            'blitzcdn'
+        );
+
+        add_settings_field(
+            'middleware_url',
+            'Middleware URL',
+            [$this, 'render_text_field'],
+            'blitzcdn',
+            'blitzcdn_zip_migration_section',
+            ['field' => 'middleware_url', 'description' => 'URL of the BlitzCDN middleware service (e.g., https://middleware.example.com). Required for zip-based migration.', 'placeholder' => 'https://middleware.example.com']
+        );
+
+        add_settings_field(
+            'middleware_api_key',
+            'Middleware API Key',
+            [$this, 'render_password_field'],
+            'blitzcdn',
+            'blitzcdn_zip_migration_section',
+            ['field' => 'middleware_api_key', 'description' => 'API key for authenticating with the middleware service. Optional but recommended.']
+        );
+
+        add_settings_field(
+            'webhook_secret',
+            'Webhook Secret',
+            [$this, 'render_password_field'],
+            'blitzcdn',
+            'blitzcdn_zip_migration_section',
+            ['field' => 'webhook_secret', 'description' => 'Secret token for authenticating webhook callbacks from middleware. Auto-generated if empty.', 'auto_generate' => true]
+        );
+
+        add_settings_field(
+            'zip_batch_size',
+            'Zip Batch Size',
+            [$this, 'render_number_field'],
+            'blitzcdn',
+            'blitzcdn_zip_migration_section',
+            ['field' => 'zip_batch_size', 'default' => 100, 'min' => 10, 'max' => 500, 'description' => 'Maximum number of attachments to include per zip file. Larger batches are more efficient but create larger files. (Default: 100)']
+        );
+    }
+
+    public function render_zip_migration_section_description() {
+        echo '<p>Configure the middleware service for high-performance zip-based migration. The middleware processes files in parallel for faster uploads.</p>';
     }
 
     public function render_text_field($args) {
@@ -89,9 +137,10 @@ class Settings {
         $field = $args['field'];
         $value = $options[$field] ?? ($args['default'] ?? '');
         $description = $args['description'] ?? '';
-        echo "<input type='text' name='blitzcdn_settings[$field]' value='" . esc_attr($value) . "' class='regular-text'>";
+        $placeholder = $args['placeholder'] ?? '';
+        echo "<input type='text' name='blitzcdn_settings[$field]' value='" . esc_attr($value) . "' class='regular-text' placeholder='" . esc_attr($placeholder) . "'>";
         if ($description) {
-            echo "<p class='description'>$description</p>";
+            echo "<p class='description'>" . esc_html($description) . "</p>";
         }
     }
 
@@ -99,7 +148,24 @@ class Settings {
         $options = get_option('blitzcdn_settings');
         $field = $args['field'];
         $value = $options[$field] ?? '';
+        $description = $args['description'] ?? '';
+        $auto_generate = $args['auto_generate'] ?? false;
+        
+        // Auto-generate webhook secret if empty and auto_generate is true
+        if ($auto_generate && empty($value) && $field === 'webhook_secret') {
+            $value = wp_generate_password(32, false);
+            // Save the generated value
+            $options[$field] = $value;
+            update_option('blitzcdn_settings', $options);
+        }
+        
         echo "<input type='password' name='blitzcdn_settings[$field]' value='" . esc_attr($value) . "' class='regular-text'>";
+        if ($auto_generate) {
+            echo " <button type='button' class='button button-secondary blitzcdn-regenerate-secret' data-field='" . esc_attr($field) . "'>Regenerate</button>";
+        }
+        if ($description) {
+            echo "<p class='description'>" . esc_html($description) . "</p>";
+        }
     }
 
     public function render_checkbox_field($args) {
@@ -203,6 +269,10 @@ class Settings {
             
             <hr>
             
+            <?php $this->render_zip_migration_section($is_configured, $options); ?>
+            
+            <hr>
+            
             <h2>Goodbye Procedure</h2>
             <p>Leaving BlitzCDN? This tool will redownload all your media files from Appwrite back to WordPress, restore local URLs, and optionally clean up files on Appwrite.</p>
             
@@ -278,6 +348,111 @@ class Settings {
                 </div>
             <?php endif; ?>
         </div>
+        <?php
+    }
+
+    /**
+     * Render the zip-based migration UI section.
+     * 
+     * @param bool $is_configured Whether the account is configured.
+     * @param array $options Plugin settings.
+     */
+    private function render_zip_migration_section($is_configured, $options) {
+        $middleware_url = $options['middleware_url'] ?? '';
+        $middleware_configured = !empty($middleware_url);
+        ?>
+        <h2>⚡ Fast Migration (Zip-based)</h2>
+        <p>High-performance migration that packages files into a zip, uploads to a middleware service, and processes files in parallel.</p>
+        
+        <?php if (!$is_configured): ?>
+            <div style="background: #fee; border-left: 4px solid #dc3545; padding: 12px; margin: 20px 0; border-radius: 4px;">
+                <p style="margin: 0; color: #333;">
+                    <strong>🔒 Feature Locked</strong><br>
+                    Fast migration is disabled until you set your Account Email in the settings above.
+                </p>
+            </div>
+        <?php elseif (!$middleware_configured): ?>
+            <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 20px 0; border-radius: 4px;">
+                <p style="margin: 0; color: #333;">
+                    <strong>⚙️ Middleware Not Configured</strong><br>
+                    To use fast migration, configure the Middleware URL in the "Fast Migration (Zip-based)" settings section above.
+                </p>
+            </div>
+        <?php else: ?>
+            <div style="background: #d4edda; border-left: 4px solid #28a745; padding: 12px; margin: 15px 0; border-radius: 4px;">
+                <p style="margin: 0 0 8px 0; color: #155724; font-weight: 500;">
+                    <strong>✓ Middleware Configured</strong>
+                </p>
+                <p style="margin: 0; color: #155724; font-size: 13px;">
+                    Endpoint: <code><?php echo esc_html($middleware_url); ?></code>
+                </p>
+            </div>
+            
+            <div style="background: #e7f3ff; border-left: 4px solid #2271b1; padding: 12px; margin: 15px 0; border-radius: 4px;">
+                <p style="margin: 0 0 8px 0; color: #333; font-weight: 500;">
+                    <strong>🚀 How Fast Migration Works</strong>
+                </p>
+                <ol style="margin: 0; padding-left: 20px; color: #555; font-size: 13px; line-height: 1.8;">
+                    <li>WordPress packages your media files into a zip archive</li>
+                    <li>The zip is uploaded to the middleware service</li>
+                    <li>Middleware processes files in parallel (much faster than sequential)</li>
+                    <li>Results are sent back via webhook to update your WordPress database</li>
+                </ol>
+            </div>
+            
+            <div id="blitzcdn-zip-stats" style="display: flex; gap: 20px; margin: 15px 0;">
+                <div style="background: #f0f0f1; padding: 15px 20px; border-radius: 4px; flex: 1;">
+                    <div style="font-size: 28px; font-weight: bold; color: #2271b1;" id="blitzcdn-zip-total-attachments">-</div>
+                    <div style="font-size: 12px; color: #666;">Attachments to migrate</div>
+                </div>
+                <div style="background: #f0f0f1; padding: 15px 20px; border-radius: 4px; flex: 1;">
+                    <div style="font-size: 28px; font-weight: bold; color: #2271b1;" id="blitzcdn-zip-total-assets">-</div>
+                    <div style="font-size: 12px; color: #666;">Total assets (files)</div>
+                </div>
+            </div>
+            
+            <p>
+                <button type="button" id="blitzcdn-zip-migrate-btn" class="button button-primary" data-nonce="<?php echo esc_attr(wp_create_nonce('blitzcdn_migration_nonce')); ?>" data-ajax-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>">
+                    🚀 Start Fast Migration
+                </button>
+                <button type="button" id="blitzcdn-zip-check-status-btn" class="button button-secondary" data-nonce="<?php echo esc_attr(wp_create_nonce('blitzcdn_migration_nonce')); ?>" data-ajax-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>">
+                    🔄 Check Status
+                </button>
+                <button type="button" id="blitzcdn-zip-reset-btn" class="button button-secondary" style="display: none;" data-nonce="<?php echo esc_attr(wp_create_nonce('blitzcdn_migration_nonce')); ?>" data-ajax-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>">
+                    Reset Migration
+                </button>
+            </p>
+            
+            <div id="blitzcdn-zip-migration-status" style="margin-top: 15px; display: none;">
+                <div style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; border-radius: 4px;">
+                    <h4 style="margin: 0 0 10px 0;">Migration Status</h4>
+                    <table class="widefat" style="max-width: 600px;">
+                        <tr>
+                            <td><strong>Status:</strong></td>
+                            <td><span id="blitzcdn-zip-status-text">-</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Migration ID:</strong></td>
+                            <td><code id="blitzcdn-zip-migration-id">-</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Files in Zip:</strong></td>
+                            <td><span id="blitzcdn-zip-files-count">-</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Processed:</strong></td>
+                            <td><span id="blitzcdn-zip-processed">-</span></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Failed:</strong></td>
+                            <td><span id="blitzcdn-zip-failed">-</span></td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+            
+            <div id="blitzcdn-zip-migration-log" style="max-height: 300px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; border: 1px solid #333; padding: 15px; margin-top: 15px; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; border-radius: 4px; display: none;"></div>
+        <?php endif; ?>
         <?php
     }
 }

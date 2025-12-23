@@ -618,5 +618,232 @@ if (typeof jQuery === 'undefined') {
                 logContainer.scrollTop = logContainer.scrollHeight;
             }
         }
+
+        // ============================================
+        // ZIP-BASED (FAST) MIGRATION Logic
+        // ============================================
+        var zipMigrationStatusPollInterval = null;
+
+        // Load initial stats for zip migration
+        function loadZipMigrationStats() {
+            ajaxPost({
+                action: 'blitzcdn_get_zip_migration_stats'
+            }, function (response) {
+                if (response.success) {
+                    $('#blitzcdn-zip-total-attachments').text(response.data.total_attachments);
+                    $('#blitzcdn-zip-total-assets').text(response.data.total_assets);
+                }
+            });
+        }
+
+        // Load zip migration stats on page load if the section exists
+        if ($('#blitzcdn-zip-stats').length) {
+            loadZipMigrationStats();
+            // Also check current status
+            checkZipMigrationStatus();
+        }
+
+        // Start zip migration
+        $(document).on('click', '#blitzcdn-zip-migrate-btn', function (e) {
+            e.preventDefault();
+            
+            var $btn = $(this);
+            if ($btn.prop('disabled')) return;
+
+            if (!confirm('Are you sure you want to start the Fast Migration?\n\nThis will package all unmigrated media files into a zip and upload to the middleware service for processing.')) {
+                return;
+            }
+
+            $btn.prop('disabled', true).text('Starting...');
+            $('#blitzcdn-zip-migration-log').show().empty();
+            zipLog('Starting fast migration...', 'info');
+
+            ajaxPost({
+                action: 'blitzcdn_start_zip_migration',
+                batch_size: 0 // 0 = all
+            }, function (response) {
+                if (response.success) {
+                    zipLog('Migration started successfully!', 'success');
+                    zipLog('Migration ID: ' + response.data.migration_id, 'info');
+                    zipLog('Attachments: ' + response.data.attachment_count, 'info');
+                    zipLog('Files in zip: ' + response.data.files_added, 'info');
+                    zipLog('Status: ' + response.data.status, 'info');
+                    zipLog('Waiting for middleware to process files...', 'info');
+
+                    // Start polling for status
+                    startZipStatusPolling();
+                    updateZipStatusUI(response.data);
+                } else {
+                    zipLog('Error: ' + response.data, 'error');
+                    $btn.prop('disabled', false).text('🚀 Start Fast Migration');
+                }
+            }, function (xhr, status, error) {
+                zipLog('Network error: ' + error, 'error');
+                $btn.prop('disabled', false).text('🚀 Start Fast Migration');
+            });
+        });
+
+        // Check status button
+        $(document).on('click', '#blitzcdn-zip-check-status-btn', function (e) {
+            e.preventDefault();
+            checkZipMigrationStatus();
+        });
+
+        // Reset migration button
+        $(document).on('click', '#blitzcdn-zip-reset-btn', function (e) {
+            e.preventDefault();
+            
+            if (!confirm('Are you sure you want to reset the migration status?\n\nThis will clear the current status and allow you to start a new migration.')) {
+                return;
+            }
+
+            ajaxPost({
+                action: 'blitzcdn_reset_zip_migration'
+            }, function (response) {
+                if (response.success) {
+                    zipLog('Migration status reset.', 'success');
+                    stopZipStatusPolling();
+                    $('#blitzcdn-zip-migration-status').hide();
+                    $('#blitzcdn-zip-reset-btn').hide();
+                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    loadZipMigrationStats();
+                } else {
+                    zipLog('Error resetting: ' + response.data, 'error');
+                }
+            });
+        });
+
+        function checkZipMigrationStatus() {
+            ajaxPost({
+                action: 'blitzcdn_get_zip_migration_status'
+            }, function (response) {
+                if (response.success) {
+                    updateZipStatusUI(response.data);
+                    
+                    // If migration is in progress, start polling
+                    if (response.data.status && response.data.status !== 'idle' && response.data.status !== 'completed') {
+                        startZipStatusPolling();
+                    }
+                }
+            });
+        }
+
+        function updateZipStatusUI(data) {
+            if (!data || data.status === 'idle') {
+                $('#blitzcdn-zip-migration-status').hide();
+                $('#blitzcdn-zip-reset-btn').hide();
+                return;
+            }
+
+            $('#blitzcdn-zip-migration-status').show();
+            $('#blitzcdn-zip-reset-btn').show();
+
+            // Status text with color
+            var statusText = data.status || '-';
+            var statusColor = '#666';
+            switch (data.status) {
+                case 'zip_created':
+                    statusColor = '#2271b1';
+                    statusText = '📦 Zip Created';
+                    break;
+                case 'uploading':
+                    statusColor = '#dba617';
+                    statusText = '📤 Uploading to Middleware';
+                    break;
+                case 'processing':
+                    statusColor = '#dba617';
+                    statusText = '⏳ Processing on Middleware';
+                    break;
+                case 'webhook_received':
+                    statusColor = '#4ec9b0';
+                    statusText = '📥 Results Received';
+                    break;
+                case 'completed':
+                    statusColor = '#28a745';
+                    statusText = '✅ Completed';
+                    stopZipStatusPolling();
+                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    loadZipMigrationStats();
+                    break;
+                case 'upload_failed':
+                case 'webhook_error':
+                    statusColor = '#dc3545';
+                    statusText = '❌ Error: ' + (data.error || data.status);
+                    stopZipStatusPolling();
+                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    break;
+            }
+
+            $('#blitzcdn-zip-status-text').html('<span style="color: ' + statusColor + ';">' + statusText + '</span>');
+            $('#blitzcdn-zip-migration-id').text(data.migration_id || '-');
+            $('#blitzcdn-zip-files-count').text(data.total_files || '-');
+            $('#blitzcdn-zip-processed').text(data.processed !== undefined ? data.processed : '-');
+            $('#blitzcdn-zip-failed').text(data.failed !== undefined ? data.failed : '-');
+
+            // Log any errors from files_failed
+            if (data.files_failed && data.files_failed.length > 0 && !data._files_failed_logged) {
+                data._files_failed_logged = true;
+                zipLog('Some files could not be added to zip:', 'warning');
+                data.files_failed.forEach(function(f) {
+                    zipLog('  - Attachment #' + f.attachment_id + ': ' + f.file + ' (' + f.reason + ')', 'warning');
+                });
+            }
+        }
+
+        function startZipStatusPolling() {
+            if (zipMigrationStatusPollInterval) return;
+            
+            zipMigrationStatusPollInterval = setInterval(function() {
+                ajaxPost({
+                    action: 'blitzcdn_get_zip_migration_status'
+                }, function (response) {
+                    if (response.success) {
+                        updateZipStatusUI(response.data);
+                    }
+                });
+            }, 3000); // Poll every 3 seconds
+        }
+
+        function stopZipStatusPolling() {
+            if (zipMigrationStatusPollInterval) {
+                clearInterval(zipMigrationStatusPollInterval);
+                zipMigrationStatusPollInterval = null;
+            }
+        }
+
+        function zipLog(message, type) {
+            var timestamp = new Date().toLocaleTimeString();
+            var color = '#d4d4d4'; // Default gray
+
+            switch (type) {
+                case 'success':
+                    color = '#4ec9b0';
+                    break;
+                case 'error':
+                    color = '#f14c4c';
+                    break;
+                case 'warning':
+                    color = '#cca700';
+                    break;
+                case 'info':
+                    color = '#3794ff';
+                    break;
+            }
+
+            var logHtml = '<div style="color: ' + color + '; margin-bottom: 4px;">';
+            if (message) {
+                logHtml += '<span style="color: #6a9955;">[' + timestamp + ']</span> ' + message;
+            }
+            logHtml += '</div>';
+
+            var $log = $('#blitzcdn-zip-migration-log');
+            $log.append(logHtml);
+
+            // Auto-scroll to bottom
+            var logContainer = $log[0];
+            if (logContainer) {
+                logContainer.scrollTop = logContainer.scrollHeight;
+            }
+        }
     });
 }

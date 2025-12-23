@@ -3,6 +3,7 @@
 namespace BlitzCDN\Admin;
 
 use BlitzCDN\Core;
+use BlitzCDN\ZipMigrator;
 
 class Migrator {
 
@@ -10,6 +11,7 @@ class Migrator {
 
     public function __construct($appwrite_client) {
         $this->appwrite_client = $appwrite_client;
+
         add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
         add_action('wp_ajax_blitzcdn_migrate_batch', [$this, 'ajax_migrate_batch']);
         add_action('wp_ajax_blitzcdn_get_migration_stats', [$this, 'ajax_get_stats']);
@@ -23,6 +25,29 @@ class Migrator {
         // Goodbye / Redownload Actions
         add_action('wp_ajax_blitzcdn_get_redownload_stats', [$this, 'ajax_get_redownload_stats']);
         add_action('wp_ajax_blitzcdn_redownload_batch', [$this, 'ajax_redownload_batch']);
+
+        // Zip Migration Actions - delegate to proxy methods to avoid circular dependency
+        add_action('wp_ajax_blitzcdn_start_zip_migration', [$this, 'ajax_start_zip_migration_proxy']);
+        add_action('wp_ajax_blitzcdn_get_zip_migration_status', [$this, 'ajax_get_zip_migration_status_proxy']);
+        add_action('wp_ajax_blitzcdn_get_zip_migration_stats', [$this, 'ajax_get_zip_migration_stats_proxy']);
+        add_action('wp_ajax_blitzcdn_reset_zip_migration', [$this, 'ajax_reset_zip_migration_proxy']);
+    }
+
+    // Proxy methods for ZipMigrator AJAX handlers
+    public function ajax_start_zip_migration_proxy() {
+        Core::get_instance()->get_zip_migrator()->ajax_start_zip_migration();
+    }
+
+    public function ajax_get_zip_migration_status_proxy() {
+        Core::get_instance()->get_zip_migrator()->ajax_get_zip_migration_status();
+    }
+
+    public function ajax_get_zip_migration_stats_proxy() {
+        Core::get_instance()->get_zip_migrator()->ajax_get_zip_migration_stats();
+    }
+
+    public function ajax_reset_zip_migration_proxy() {
+        Core::get_instance()->get_zip_migrator()->ajax_reset_zip_migration();
     }
 
     public function enqueue_scripts($hook) {

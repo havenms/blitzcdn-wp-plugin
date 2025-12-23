@@ -1,0 +1,16 @@
+{
+  "name": "blitzcdn-middleware",
+  "version": "1.0.0",
+  "description": "Middleware service for BlitzCDN zip-based media migration",
+  "type": "module",
+  "scripts": {
+    "start": "bun run server.ts",
+    "dev": "bun --watch run server.ts"
+  },
+  "dependencies": {
+    "node-appwrite": "^14.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}

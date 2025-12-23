@@ -14,6 +14,7 @@ class Core {
     private $compatibility;
     private $background_migrator;
     private $redownloader;
+    private $zip_migrator;
 
     public static function get_instance() {
         if (null === self::$instance) {
@@ -47,6 +48,9 @@ class Core {
 
         // Initialize Redownloader (Goodbye Procedure)
         $this->redownloader = new Redownloader($this->appwrite_client);
+
+        // Initialize Zip Migrator (must be instantiated to register REST routes)
+        $this->zip_migrator = new ZipMigrator();
 
         // Check Action Scheduler availability
         $this->check_action_scheduler();
@@ -122,7 +126,30 @@ class Core {
                 'serve_from_cdn' => false,
                 'safe_delete' => false,
                 'delete_remote' => false,
+                'middleware_url' => '',
+                'middleware_api_key' => '',
+                'webhook_secret' => '',
+                'zip_batch_size' => 100,
             ]);
+        } else {
+            // Ensure new settings exist for existing installations
+            $settings = get_option('blitzcdn_settings');
+            $defaults = [
+                'middleware_url' => '',
+                'middleware_api_key' => '',
+                'webhook_secret' => '',
+                'zip_batch_size' => 100,
+            ];
+            $updated = false;
+            foreach ($defaults as $key => $value) {
+                if (!isset($settings[$key])) {
+                    $settings[$key] = $value;
+                    $updated = true;
+                }
+            }
+            if ($updated) {
+                update_option('blitzcdn_settings', $settings);
+            }
         }
     }
 
@@ -140,6 +167,10 @@ class Core {
 
     public function get_redownloader() {
         return $this->redownloader;
+    }
+
+    public function get_zip_migrator() {
+        return $this->zip_migrator;
     }
 
     /**
