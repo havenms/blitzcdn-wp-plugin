@@ -113,7 +113,8 @@ class Redownloader {
 
         // Track all file IDs for potential deletion
         $file_ids_to_delete = [];
-        $all_successful = true;
+        $has_errors = false;
+        $has_existing_files = false;
 
         // 1. Redownload original file
         $original_path = path_join($base_dir, $attached_file);
@@ -122,8 +123,15 @@ class Redownloader {
 
         if ($original_result['status'] === 'success') {
             $file_ids_to_delete[] = $original_file_id;
+        } elseif ($original_result['status'] === 'exists') {
+            $has_existing_files = true;
+            // When delete_from_appwrite is true, treat existing files as successful for deletion
+            if ($delete_from_appwrite) {
+                $file_ids_to_delete[] = $original_file_id;
+            }
         } else {
-            $all_successful = false;
+            // Actual error occurred
+            $has_errors = true;
         }
 
         // 2. Redownload intermediate sizes
@@ -159,14 +167,26 @@ class Redownloader {
 
                 if ($size_result['status'] === 'success') {
                     $file_ids_to_delete[] = $size_info['file_id'];
+                } elseif ($size_result['status'] === 'exists') {
+                    $has_existing_files = true;
+                    // When delete_from_appwrite is true, treat existing files as successful for deletion
+                    if ($delete_from_appwrite) {
+                        $file_ids_to_delete[] = $size_info['file_id'];
+                    }
                 } else {
-                    $all_successful = false;
+                    // Actual error occurred
+                    $has_errors = true;
                 }
             }
         }
 
-        // 3. Rewrite URLs in post content if all downloads succeeded
-        if ($all_successful) {
+        // 3. Rewrite URLs in post content if no errors occurred
+        // When delete_from_appwrite is true and files exist locally, we still need to rewrite URLs
+        // Also rewrite URLs if files exist locally (regardless of delete_from_appwrite setting)
+        // because the files are already local and URLs should point to local paths
+        $should_rewrite_urls = !$has_errors;
+        
+        if ($should_rewrite_urls) {
             // Get CDN URLs before clearing metadata
             $cdn_url = get_post_meta($attachment_id, '_blitzcdn_cdn_url', true);
             
@@ -214,21 +234,46 @@ class Redownloader {
             delete_post_meta($attachment_id, '_blitzcdn_cdn_url');
             delete_post_meta($attachment_id, '_blitzcdn_sizes');
 
-            $result['message'] = 'Successfully redownloaded all files and cleared CDN metadata';
+            // Build appropriate success message
+            if ($has_existing_files) {
+                // Some or all files existed locally
+                $result['message'] = 'Files already exist locally. Cleared CDN metadata and rewrote URLs';
+            } else {
+                $result['message'] = 'Successfully redownloaded all files and cleared CDN metadata';
+            }
 
-            // 4. Delete from Appwrite if requested and all downloads succeeded
+            // 4. Delete from Appwrite if requested
+            // When delete_from_appwrite is true and files exist locally, we still delete from Appwrite
             if ($delete_from_appwrite && !empty($file_ids_to_delete)) {
                 $deleted_count = 0;
+                $delete_errors = [];
+                
                 foreach ($file_ids_to_delete as $file_id) {
-                    if ($this->appwrite_client->delete_file($file_id)) {
-                        $deleted_count++;
+                    try {
+                        if ($this->appwrite_client->delete_file($file_id)) {
+                            $deleted_count++;
+                        } else {
+                            $delete_errors[] = $file_id;
+                        }
+                    } catch (\Exception $e) {
+                        error_log("BlitzCDN: Failed to delete file $file_id from Appwrite: " . $e->getMessage());
+                        $delete_errors[] = $file_id;
                     }
                 }
+                
                 $result['details']['deleted_from_appwrite'] = true;
                 $result['details']['deleted_count'] = $deleted_count;
-                $result['message'] .= ". Deleted $deleted_count files from Appwrite";
+                $result['details']['delete_errors'] = $delete_errors;
+                
+                if ($deleted_count > 0) {
+                    $result['message'] .= ". Deleted $deleted_count file(s) from Appwrite";
+                    if (!empty($delete_errors)) {
+                        $result['message'] .= " (" . count($delete_errors) . " failed)";
+                    }
+                }
             }
         } else {
+            // Errors occurred - don't rewrite URLs or clear metadata
             $result['status'] = 'partial';
             $result['message'] = 'Some files failed to download. CDN metadata preserved for retry.';
         }
