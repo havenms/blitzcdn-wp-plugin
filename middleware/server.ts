@@ -31,6 +31,7 @@ const config = {
     parallelUploads: parseInt(process.env.PARALLEL_UPLOADS || '5'),
     maxRetries: parseInt(process.env.MAX_RETRIES || '3'),
     tlsRejectUnauthorized: process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0',
+    maxZipSizeMB: parseInt(process.env.MAX_ZIP_SIZE_MB || '2048'), // 2GB default
 };
 
 // Validate configuration
@@ -118,7 +119,7 @@ async function extractZip(zipPath: string, extractDir: string): Promise<void> {
         stdout: 'pipe',
         stderr: 'pipe',
     });
-    
+
     const exitCode = await proc.exited;
     if (exitCode !== 0) {
         const stderr = await new Response(proc.stderr).text();
@@ -135,7 +136,7 @@ async function uploadFileToAppwrite(
     // Read file as buffer and create a proper File object
     const fileBuffer = await readFile(filePath);
     const fileBlob = new Blob([fileBuffer]);
-    
+
     // Create a File object that Appwrite SDK can handle
     const fileObject = new File([fileBlob], fileName, {
         type: 'application/octet-stream'
@@ -177,21 +178,21 @@ async function uploadWithRetry(
     retries: number = config.maxRetries
 ): Promise<string> {
     let lastError: Error | null = null;
-    
+
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             return await uploadFileToAppwrite(filePath, fileName, accountEmail, originalUrl);
         } catch (error) {
             lastError = error as Error;
             console.warn(`Upload attempt ${attempt}/${retries} failed for ${fileName}: ${lastError.message}`);
-            
+
             if (attempt < retries) {
                 // Exponential backoff
                 await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
             }
         }
     }
-    
+
     throw lastError || new Error('Upload failed after retries');
 }
 
@@ -266,7 +267,7 @@ async function processAttachment(
     });
 
     const sizeResults = await Promise.all(sizePromises);
-    
+
     for (const sizeResult of sizeResults) {
         if (sizeResult.success && sizeResult.fileId) {
             result.sizes[sizeResult.name] = {
@@ -360,8 +361,8 @@ async function sendWebhook(
             };
 
             // Disable TLS verification for local dev if configured
-            // @ts-ignore - Bun-specific option
             if (!config.tlsRejectUnauthorized) {
+                // @ts-ignore - Bun-specific option not in standard RequestInit
                 fetchOptions.tls = { rejectUnauthorized: false };
             }
 
@@ -430,8 +431,16 @@ async function handleMigrate(request: Request): Promise<Response> {
         await mkdir(tempDir, { recursive: true });
         await mkdir(extractDir, { recursive: true });
 
-        // Save uploaded zip
+        // Save uploaded zip with size validation
         const arrayBuffer = await file.arrayBuffer();
+        const zipSizeMB = arrayBuffer.byteLength / (1024 * 1024);
+
+        console.log(`Receiving zip: ${zipSizeMB.toFixed(2)} MB`);
+
+        if (zipSizeMB > config.maxZipSizeMB) {
+            throw new Error(`Zip file too large (${zipSizeMB.toFixed(2)} MB). Maximum allowed: ${config.maxZipSizeMB} MB. Consider reducing zip_batch_size in WordPress settings.`);
+        }
+
         await writeFile(zipPath, Buffer.from(arrayBuffer));
 
         // Extract zip
@@ -452,9 +461,10 @@ async function handleMigrate(request: Request): Promise<Response> {
 
         const totalBatches = Math.max(1, Math.ceil(metadata.attachments.length / Math.max(1, config.batchSize || 10)));
 
-        // Send confirmation webhook so the plugin can notify the user it's safe to close the page
+        // Send confirmation webhook IMMEDIATELY so user can close browser
+        // This is critical - user doesn't need to wait for processing
         try {
-            await sendWebhook(metadata.webhook_url, metadata.webhook_secret, {
+            const confirmSent = await sendWebhook(metadata.webhook_url, metadata.webhook_secret, {
                 migration_id: metadata.migration_id,
                 status: 'received',
                 results: [],
@@ -463,10 +473,17 @@ async function handleMigrate(request: Request): Promise<Response> {
                 processed: 0,
                 failed: 0,
                 safe_to_quit: true,
-                message: 'Zip uploaded to middleware; processing will continue in the background.',
+                message: 'Zip uploaded successfully. Processing will continue in the background. You can safely close this page.',
             });
+
+            if (confirmSent) {
+                console.log(`✅ Confirmation webhook sent for migration ${metadata.migration_id}. User can close browser.`);
+            } else {
+                console.warn(`⚠️ Confirmation webhook failed for migration ${metadata.migration_id}. Processing will continue anyway.`);
+            }
         } catch (confirmError) {
-            console.warn(`Confirmation webhook failed for migration ${metadata.migration_id}: ${confirmError}`);
+            console.error(`❌ Confirmation webhook error for migration ${metadata.migration_id}: ${confirmError}`);
+            // Still continue with processing even if webhook fails
         }
 
         // Process migration (async - don't await)
@@ -508,7 +525,7 @@ async function handleMigrate(request: Request): Promise<Response> {
             })
             .catch(async (error) => {
                 console.error(`Migration ${metadata.migration_id} failed:`, error);
-                
+
                 // Send error webhook
                 await sendWebhook(metadata.webhook_url, metadata.webhook_secret, {
                     migration_id: metadata.migration_id,
@@ -534,11 +551,11 @@ async function handleMigrate(request: Request): Promise<Response> {
 
     } catch (error) {
         console.error('Migration error:', error);
-        
+
         // Cleanup on error
         try {
             await rm(tempDir, { recursive: true, force: true });
-        } catch {}
+        } catch { }
 
         return new Response(JSON.stringify({
             error: 'Migration failed',
@@ -552,7 +569,7 @@ async function handleMigrate(request: Request): Promise<Response> {
 
 async function handleHealth(): Promise<Response> {
     const errors = validateConfig();
-    
+
     return new Response(JSON.stringify({
         status: errors.length === 0 ? 'ok' : 'degraded',
         timestamp: new Date().toISOString(),
@@ -577,7 +594,7 @@ async function handleHealth(): Promise<Response> {
 const server = Bun.serve({
     port: config.port,
     hostname: config.host,
-    
+
     async fetch(request: Request): Promise<Response> {
         const url = new URL(request.url);
         const path = url.pathname;

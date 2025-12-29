@@ -185,6 +185,15 @@ class ZipMigrator {
             return new \WP_Error('zip_unavailable', 'ZipArchive extension is not available.');
         }
 
+        // Increase memory limit for large migrations
+        $current_limit = ini_get('memory_limit');
+        $limit_bytes = $this->parse_memory_limit($current_limit);
+        $needed_bytes = 512 * 1024 * 1024; // 512MB
+        
+        if ($limit_bytes < $needed_bytes && $limit_bytes !== -1) {
+            @ini_set('memory_limit', '512M');
+        }
+
         $upload_dir = wp_upload_dir();
         $base_dir = $upload_dir['basedir'];
 
@@ -417,25 +426,37 @@ class ZipMigrator {
                 continue;
             }
 
-            // Update postmeta for original file
-            if (!empty($result['file_id'])) {
-                update_post_meta($attachment_id, '_blitzcdn_file_id', sanitize_text_field($result['file_id']));
+            // Only update metadata if we successfully uploaded the original file
+            // This prevents partial/corrupted metadata for failed uploads
+            if (empty($result['file_id'])) {
+                error_log("BlitzCDN: Skipping metadata update for attachment {$attachment_id} - no file_id");
+                $failed++;
+                continue;
             }
 
+            // Update postmeta for original file
+            update_post_meta($attachment_id, '_blitzcdn_file_id', sanitize_text_field($result['file_id']));
+            
             if (!empty($result['cdn_url'])) {
                 update_post_meta($attachment_id, '_blitzcdn_cdn_url', esc_url_raw($result['cdn_url']));
             }
 
-            // Update sizes metadata
+            // Update sizes metadata - only include successfully uploaded sizes
             if (!empty($result['sizes']) && is_array($result['sizes'])) {
                 $blitz_sizes = [];
                 foreach ($result['sizes'] as $size_name => $size_data) {
-                    $blitz_sizes[$size_name] = [
-                        'file_id' => sanitize_text_field($size_data['file_id'] ?? ''),
-                        'url' => esc_url_raw($size_data['url'] ?? ''),
-                    ];
+                    // Only save size if it has a file_id (successful upload)
+                    if (!empty($size_data['file_id'])) {
+                        $blitz_sizes[$size_name] = [
+                            'file_id' => sanitize_text_field($size_data['file_id'] ?? ''),
+                            'url' => esc_url_raw($size_data['url'] ?? ''),
+                        ];
+                    }
                 }
-                update_post_meta($attachment_id, '_blitzcdn_sizes', $blitz_sizes);
+                // Only update if we have at least some successful sizes
+                if (!empty($blitz_sizes)) {
+                    update_post_meta($attachment_id, '_blitzcdn_sizes', $blitz_sizes);
+                }
             }
 
             $processed++;
@@ -552,24 +573,101 @@ class ZipMigrator {
     }
 
     /**
+     * Parse memory limit string to bytes.
+     * 
+     * @param string $limit Memory limit string (e.g., '256M', '1G').
+     * @return int Memory limit in bytes, or -1 for unlimited.
+     */
+    private function parse_memory_limit($limit) {
+        if ($limit === '-1') {
+            return -1;
+        }
+        
+        $limit = trim($limit);
+        $last = strtolower($limit[strlen($limit) - 1]);
+        $limit = (int) $limit;
+        
+        switch ($last) {
+            case 'g':
+                $limit *= 1024;
+            case 'm':
+                $limit *= 1024;
+            case 'k':
+                $limit *= 1024;
+        }
+        
+        return $limit;
+    }
+
+    /**
+     * Cap attachments by total file count (originals + sizes).
+     * Enforces a hard limit of 10,000 files per zip for stability.
+     * 
+     * @param array $attachment_ids All attachment IDs to consider.
+     * @param int $max_attachments Maximum number of attachments (respects user setting).
+     * @return array Capped array of attachment IDs.
+     */
+    private function cap_attachments_by_file_count($attachment_ids, $max_attachments) {
+        $file_cap = 10000; // Hard cap on total files (originals + sizes)
+        $result_ids = [];
+        $total_files = 0;
+        
+        foreach ($attachment_ids as $attachment_id) {
+            // Stop if we've hit the attachment limit
+            if (count($result_ids) >= $max_attachments) {
+                break;
+            }
+            
+            // Count files for this attachment: 1 original + number of sizes
+            $wp_metadata = wp_get_attachment_metadata($attachment_id);
+            $size_count = !empty($wp_metadata['sizes']) && is_array($wp_metadata['sizes']) ? count($wp_metadata['sizes']) : 0;
+            $attachment_file_count = 1 + $size_count; // original + sizes
+            
+            // Check if adding this attachment would exceed the file cap
+            if ($total_files + $attachment_file_count > $file_cap) {
+                error_log("BlitzCDN: File cap reached. Stopping at {$total_files} files with " . count($result_ids) . " attachments.");
+                break;
+            }
+            
+            $result_ids[] = $attachment_id;
+            $total_files += $attachment_file_count;
+        }
+        
+        return $result_ids;
+    }
+
+    /**
      * Start a zip migration process.
      * 
-     * @param int $batch_size Maximum number of attachments to include (0 for all).
+     * @param int $limit_attachments Maximum number of attachments to migrate (0 for all). Used for testing.
      * @return array|WP_Error Result data or error.
      */
-    public function start_migration($batch_size = 0) {
+    public function start_migration($limit_attachments = 0) {
         // Reset previous status
         $this->reset_migration_status();
 
+        $settings = get_option('blitzcdn_settings', []);
+        $zip_batch_size = isset($settings['zip_batch_size']) ? intval($settings['zip_batch_size']) : 100;
+        
+        // Ensure batch size is within reasonable bounds
+        $zip_batch_size = max(1, min(10000, $zip_batch_size));
+
         // Get attachments to migrate
-        $attachment_ids = $this->get_unmigrated_attachments($batch_size);
+        $attachment_ids = $this->get_unmigrated_attachments($limit_attachments);
 
         if (empty($attachment_ids)) {
             return new \WP_Error('no_attachments', 'No attachments found to migrate.');
         }
 
+        // Calculate how many attachments to include respecting the 10,000 file cap
+        $capped_ids = $this->cap_attachments_by_file_count($attachment_ids, $zip_batch_size);
+        
+        if (empty($capped_ids)) {
+            return new \WP_Error('no_attachments', 'No valid attachments to migrate after file cap check.');
+        }
+
         // Create zip
-        $zip_result = $this->create_migration_zip($attachment_ids);
+        $zip_result = $this->create_migration_zip($capped_ids);
 
         if (is_wp_error($zip_result)) {
             return $zip_result;
@@ -582,13 +680,13 @@ class ZipMigrator {
             return $upload_result;
         }
 
-        $total_batches = isset($zip_result['metadata']['attachments']) ? (int) ceil(count($zip_result['metadata']['attachments']) / self::MIDDLEWARE_BATCH_SIZE) : (int) ceil(count($attachment_ids) / self::MIDDLEWARE_BATCH_SIZE);
+        $total_batches = isset($zip_result['metadata']['attachments']) ? (int) ceil(count($zip_result['metadata']['attachments']) / self::MIDDLEWARE_BATCH_SIZE) : (int) ceil(count($capped_ids) / self::MIDDLEWARE_BATCH_SIZE);
 
         return [
             'success' => true,
             'migration_id' => $zip_result['migration_id'],
             // Report the number of attachments actually included in the zip (after capping files)
-            'attachment_count' => isset($zip_result['metadata']['attachments']) ? count($zip_result['metadata']['attachments']) : count($attachment_ids),
+            'attachment_count' => isset($zip_result['metadata']['attachments']) ? count($zip_result['metadata']['attachments']) : count($capped_ids),
             'files_added' => $zip_result['files_added'],
             'status' => 'awaiting_confirmation',
             'safe_to_quit' => false,
@@ -616,9 +714,10 @@ class ZipMigrator {
             wp_send_json_error('Middleware URL not configured. Please set it in BlitzCDN settings.');
         }
 
-        $batch_size = isset($_POST['batch_size']) ? intval($_POST['batch_size']) : 0;
+        // For testing, allow limiting total attachments processed (0 = use setting batch size)
+        $limit_attachments = isset($_POST['limit_attachments']) ? intval($_POST['limit_attachments']) : 0;
         
-        $result = $this->start_migration($batch_size);
+        $result = $this->start_migration($limit_attachments);
 
         if (is_wp_error($result)) {
             wp_send_json_error($result->get_error_message());

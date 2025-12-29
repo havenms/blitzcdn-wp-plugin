@@ -60,6 +60,7 @@ The middleware uses two different "batch" concepts:
 | `BATCH_SIZE` | Attachments per webhook callback batch (default: 10) | No |
 | `PARALLEL_UPLOADS` | Concurrent file uploads within each batch (default: 5) | No |
 | `MAX_RETRIES` | Max retry attempts for failed uploads (default: 3) | No |
+| `MAX_ZIP_SIZE_MB` | Maximum zip file size in MB (default: 2048 = 2GB) | No |
 | `NODE_TLS_REJECT_UNAUTHORIZED` | Set to `0` to disable SSL verification (local dev only) | No |
 
 ## Running
@@ -286,6 +287,61 @@ WantedBy=multi-user.target
 4. **File Validation**: The middleware validates zip structure and sanitizes file paths.
 
 5. **Rate Limiting**: Consider adding rate limiting at the reverse proxy level.
+
+## Handling Large-Scale Migrations (18,000+ files)
+
+The system is designed to handle large migrations efficiently:
+
+### File Cap Strategy
+
+- WordPress enforces a **10,000 file cap per zip** (originals + sizes combined)
+- For 18,000 files, expect 2-3 migration runs depending on image size configurations
+- Each migration can be run independently - the system tracks what's already migrated
+
+### Background Processing
+
+1. **Initial Upload**: WordPress uploads the zip to middleware
+2. **Immediate Webhook**: Middleware sends "received" status immediately
+3. **Safe to Close**: User can close browser after receiving confirmation
+4. **Async Processing**: Middleware processes files in background
+5. **Batch Callbacks**: WordPress receives progress updates every 10 attachments (configurable via `BATCH_SIZE`)
+6. **Final Webhook**: Completion status sent when all files are processed
+
+### Performance Tuning
+
+For large migrations, adjust these environment variables:
+
+```bash
+# Process more files before sending webhook (reduces callback overhead)
+BATCH_SIZE=20
+
+# Upload more files in parallel (faster but uses more memory/connections)
+PARALLEL_UPLOADS=10
+
+# Increase max zip size if needed (default 2GB)
+MAX_ZIP_SIZE_MB=3072
+
+# More aggressive retries for flaky networks
+MAX_RETRIES=5
+```
+
+### Memory Considerations
+
+- Each parallel upload holds files in memory
+- Recommended RAM: 1GB + (average file size × PARALLEL_UPLOADS)
+- Example: 5MB average file × 10 parallel = 50MB + 1GB = ~1.1GB minimum
+- Docker: Increase memory limit in docker-compose.yml if needed
+
+### Multiple Migration Runs
+
+If you need to migrate 18,000 files:
+
+1. **First Run**: Configure `zip_batch_size=100` in WordPress (will process ~400-500 attachments due to 10k file cap)
+2. **Monitor**: Check WordPress admin for completion status
+3. **Second Run**: Click "Start Fast Migration" again - only unmigrated files will be included
+4. **Repeat**: Continue until all files are migrated
+
+The system automatically excludes already-migrated attachments, so multiple runs are safe and efficient.
 
 ## Monitoring
 

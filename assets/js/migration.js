@@ -661,8 +661,8 @@ if (typeof jQuery === 'undefined') {
             zipLog('Starting fast migration...', 'info');
 
             ajaxPost({
-                action: 'blitzcdn_start_zip_migration',
-                batch_size: 0 // 0 = all
+                action: 'blitzcdn_start_zip_migration'
+                // Uses zip_batch_size from WordPress settings
             }, function (response) {
                 if (response.success) {
                     zipLog('Migration started successfully!', 'success');

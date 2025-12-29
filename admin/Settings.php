@@ -145,12 +145,13 @@ class Settings {
             [$this, 'render_number_field'],
             'blitzcdn',
             'blitzcdn_zip_migration_section',
-            ['field' => 'zip_batch_size', 'default' => 100, 'min' => 1, 'max' => 10000, 'description' => 'Maximum number of attachments to include per zip file. Note: each attachment may contain multiple assets (original + sizes). The system enforces a hard cap of 10,000 files (originals + sizes) per zip to keep processing stable. (Default: 100)']
+            ['field' => 'zip_batch_size', 'default' => 100, 'min' => 1, 'max' => 10000, 'description' => 'Maximum number of attachments to include per zip file. Each attachment may contain multiple assets (original + sizes). The system enforces a hard cap of 10,000 total files (originals + sizes) per zip to ensure stable processing. For 18,000 files, multiple migration runs may be needed. (Default: 100)']
         );
     }
 
     public function render_zip_migration_section_description() {
         echo '<p>Configure the middleware service for high-performance zip-based migration. The middleware processes files in parallel for faster uploads.</p>';
+        echo '<p><strong>Important:</strong> Once the zip is uploaded to the middleware, the migration continues in the background. You can safely close your browser after seeing the confirmation message.</p>';
     }
 
     public function render_text_field($args) {
