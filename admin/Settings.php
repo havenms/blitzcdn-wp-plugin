@@ -9,6 +9,23 @@ class Settings {
         add_action('admin_init', [$this, 'register_settings']);
     }
 
+    /**
+     * Check an environment flag as boolean.
+     * Accepts 1/true/yes (case-insensitive) as truthy.
+     */
+    private function env_flag_true($name) {
+        $val = getenv($name);
+        if ($val === false && isset($_ENV[$name])) {
+            $val = $_ENV[$name];
+        }
+        if ($val === false && isset($_SERVER[$name])) {
+            $val = $_SERVER[$name];
+        }
+        if ($val === false || $val === null) return false;
+        $val = strtolower(trim((string)$val));
+        return in_array($val, ['1', 'true', 'yes'], true);
+    }
+
     public function add_admin_menu() {
         add_options_page(
             'BlitzCDN Settings',
@@ -65,23 +82,27 @@ class Settings {
             ['field' => 'delete_remote', 'description' => 'When you delete an image from WordPress, delete it from Appwrite as well.']
         );
 
-        add_settings_field(
-            'migration_batch_size',
-            'Migration Batch Size',
-            [$this, 'render_number_field'],
-            'blitzcdn',
-            'blitzcdn_main_section',
-            ['field' => 'migration_batch_size', 'default' => 20, 'min' => 1, 'max' => 100, 'description' => 'Number of attachments to process per batch in browser migration. Lower values are safer for slower servers. (Default: 20)']
-        );
+        // Conditionally hide classic migration batch size fields via env flag
+        $hide_classic_migration = $this->env_flag_true('BLITZCDN_HIDE_CLASSIC_MIGRATION');
+        if (!$hide_classic_migration) {
+            add_settings_field(
+                'migration_batch_size',
+                'Migration Batch Size',
+                [$this, 'render_number_field'],
+                'blitzcdn',
+                'blitzcdn_main_section',
+                ['field' => 'migration_batch_size', 'default' => 20, 'min' => 1, 'max' => 100, 'description' => 'Number of attachments to process per batch in browser migration. Lower values are safer for slower servers. (Default: 20)']
+            );
 
-        add_settings_field(
-            'redownload_batch_size',
-            'Redownload Batch Size',
-            [$this, 'render_number_field'],
-            'blitzcdn',
-            'blitzcdn_main_section',
-            ['field' => 'redownload_batch_size', 'default' => 5, 'min' => 1, 'max' => 50, 'description' => 'Number of attachments to process per batch in goodbye procedure. Downloads are heavier, so default is lower. (Default: 5)']
-        );
+            add_settings_field(
+                'redownload_batch_size',
+                'Redownload Batch Size',
+                [$this, 'render_number_field'],
+                'blitzcdn',
+                'blitzcdn_main_section',
+                ['field' => 'redownload_batch_size', 'default' => 5, 'min' => 1, 'max' => 50, 'description' => 'Number of attachments to process per batch in goodbye procedure. Downloads are heavier, so default is lower. (Default: 5)']
+            );
+        }
 
         // Zip Migration Settings Section
         add_settings_section(
@@ -198,6 +219,7 @@ class Settings {
         $options = get_option('blitzcdn_settings', []);
         $account_email = $options['account_email'] ?? '';
         $is_configured = !empty($account_email);
+        $hide_classic_migration = $this->env_flag_true('BLITZCDN_HIDE_CLASSIC_MIGRATION');
         ?>
         <div class="wrap">
             <h1>BlitzCDN Settings</h1>
@@ -221,6 +243,7 @@ class Settings {
             
             <hr>
             
+            <?php if (!$hide_classic_migration): ?>
             <h2>Migration Tool</h2>
             
             <?php if (!$is_configured): ?>
@@ -265,6 +288,7 @@ class Settings {
                     <p id="blitzcdn-progress-text" style="margin-top: 10px; font-weight: 500;">0%</p>
                     <div id="blitzcdn-migration-log" style="max-height: 300px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; border: 1px solid #333; padding: 15px; margin-top: 15px; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; border-radius: 4px;"></div>
                 </div>
+            <?php endif; ?>
             <?php endif; ?>
             
             <hr>
