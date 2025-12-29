@@ -733,10 +733,33 @@ if (typeof jQuery === 'undefined') {
         }
 
         function maybeNotifySafeToQuit(data) {
-            if (data && data.safe_to_quit && !zipSafeToQuitAlertShown) {
+            if (!data) return;
+
+            // Use localStorage to ensure the "safe to quit" modal only shows once per migration_id
+            var migrationId = data.migration_id || 'unknown';
+            var storageKey = 'blitzcdn_zip_safe_quit_shown_' + migrationId;
+
+            var alreadyShown = false;
+            try {
+                if (window.localStorage) {
+                    alreadyShown = !!localStorage.getItem(storageKey);
+                }
+            } catch (e) {
+                // Ignore storage errors (private mode, etc.)
+            }
+
+            if (data.safe_to_quit && !alreadyShown && !zipSafeToQuitAlertShown) {
                 zipSafeToQuitAlertShown = true;
                 zipLog('Middleware confirmed zip receipt. Processing continues in the background.', 'success');
                 alert('Good news! The middleware has received your migration zip.\n\nYou can close this page now — the migration will keep running in the background.');
+
+                try {
+                    if (window.localStorage) {
+                        localStorage.setItem(storageKey, '1');
+                    }
+                } catch (e) {
+                    // Swallow storage errors
+                }
             }
         }
 
