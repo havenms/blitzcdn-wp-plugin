@@ -181,14 +181,24 @@ async function uploadWithRetry(
 
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
-            return await uploadFileToAppwrite(filePath, fileName, accountEmail, originalUrl);
+            const fileId = await uploadFileToAppwrite(filePath, fileName, accountEmail, originalUrl);
+            if (attempt > 1) {
+                console.log(`  ✅ ${fileName.substring(fileName.lastIndexOf('/') + 1)} uploaded (retry ${attempt})`);
+            }
+            return fileId;
         } catch (error) {
             lastError = error as Error;
-            console.warn(`Upload attempt ${attempt}/${retries} failed for ${fileName}: ${lastError.message}`);
-
+            const waitSeconds = Math.pow(2, attempt);
+            
             if (attempt < retries) {
+                console.warn(`  ⚠️  Upload attempt ${attempt}/${retries} failed: ${fileName}`);
+                console.warn(`      Reason: ${lastError.message}`);
+                console.warn(`      Retrying in ${waitSeconds}s...`);
                 // Exponential backoff
-                await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+                await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+            } else {
+                console.error(`  ❌ Upload failed (all ${retries} retries exhausted): ${fileName}`);
+                console.error(`      Last error: ${lastError.message}`);
             }
         }
     }
@@ -292,7 +302,10 @@ async function processMigration(
     const results: UploadResult[] = [];
     const errors: MigrationError[] = [];
 
-    console.log(`Processing migration ${metadata.migration_id} with ${metadata.attachments.length} attachments`);
+    console.log(`\n📦 MIGRATION PROCESSING START`);
+    console.log(`   Migration ID: ${metadata.migration_id}`);
+    console.log(`   Attachments: ${metadata.attachments.length}`);
+    console.log(`   Account: ${metadata.account_email}`);
 
     const batchSize = Math.max(1, config.batchSize || 10);
     const attachments = metadata.attachments;
@@ -301,7 +314,7 @@ async function processMigration(
     for (let i = 0; i < attachments.length; i += batchSize) {
         const batch = attachments.slice(i, i + batchSize);
         const batchNumber = Math.floor(i / batchSize) + 1;
-        console.log(`Processing batch ${batchNumber}/${totalBatches}`);
+        console.log(`\n   📥 BATCH ${batchNumber}/${totalBatches} (${batch.length} attachments)`);
 
         const batchPromises = batch.map(attachment =>
             processAttachment(attachment, extractDir, metadata.account_email)
@@ -311,11 +324,16 @@ async function processMigration(
 
         const batchPayloadResults: UploadResult[] = [];
         const batchPayloadErrors: MigrationError[] = [];
+        let batchSuccessCount = 0;
+        let batchFailCount = 0;
 
         for (const { result, errors: attachmentErrors } of batchResults) {
             if (result) {
                 results.push(result);
                 batchPayloadResults.push(result);
+                batchSuccessCount++;
+            } else {
+                batchFailCount++;
             }
 
             if (attachmentErrors.length > 0) {
@@ -324,7 +342,12 @@ async function processMigration(
             }
         }
 
+        const successEmoji = batchFailCount === 0 ? '✅' : '⚠️';
+        console.log(`      ${successEmoji} Batch complete: ${batchSuccessCount} passed, ${batchFailCount} failed`);
+        console.log(`      📊 Running total: ${results.length} passed, ${errors.length} failed`);
+
         if (onBatch) {
+            console.log(`      📤 Sending batch results webhook...`);
             await onBatch({
                 migration_id: metadata.migration_id,
                 status: 'batch',
@@ -335,6 +358,7 @@ async function processMigration(
                 processed: results.length,
                 failed: errors.length,
             });
+            console.log(`      ✅ Webhook sent`);
         }
     }
 
@@ -347,6 +371,10 @@ async function sendWebhook(
     payload: WebhookPayload,
     retries: number = 3
 ): Promise<boolean> {
+    const statusLabel = payload.status.toUpperCase();
+    const statusEmoji = payload.status === 'failed' ? '❌' : (payload.status === 'completed' ? '✅' : '📤');
+    const statusColor = '🔵';
+    
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             // Configure fetch options
@@ -362,25 +390,37 @@ async function sendWebhook(
 
             // Disable TLS verification for local dev if configured
             if (!config.tlsRejectUnauthorized) {
-                // @ts-ignore - Bun-specific option not in standard RequestInit
+                // @ts-expect-error - Bun-specific option not in standard RequestInit
                 fetchOptions.tls = { rejectUnauthorized: false };
             }
 
             const response = await fetch(webhookUrl, fetchOptions);
 
             if (response.ok) {
-                console.log(`Webhook sent successfully to ${webhookUrl}`);
+                const details = payload.processed !== undefined ? ` (${payload.processed} processed, ${payload.failed} failed)` : '';
+                console.log(`   ${statusEmoji} ${statusLabel} webhook sent${details}`);
                 return true;
             }
 
             const text = await response.text();
-            console.warn(`Webhook attempt ${attempt}/${retries} failed: ${response.status} ${text}`);
+            const waitSeconds = Math.pow(2, attempt);
+            if (attempt < retries) {
+                console.warn(`   ⚠️  Webhook attempt ${attempt}/${retries} failed: HTTP ${response.status}`);
+                console.warn(`       Retrying in ${waitSeconds}s...`);
+                await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+            } else {
+                console.error(`   ❌ Webhook failed (all ${retries} attempts): HTTP ${response.status}`);
+                console.error(`       Response: ${text.substring(0, 100)}...`);
+            }
         } catch (error) {
-            console.warn(`Webhook attempt ${attempt}/${retries} error: ${error}`);
-        }
-
-        if (attempt < retries) {
-            await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+            const waitSeconds = Math.pow(2, attempt);
+            if (attempt < retries) {
+                console.warn(`   ⚠️  Webhook attempt ${attempt}/${retries} error: ${(error as Error).message}`);
+                console.warn(`       Retrying in ${waitSeconds}s...`);
+                await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+            } else {
+                console.error(`   ❌ Webhook failed: ${(error as Error).message}`);
+            }
         }
     }
 
@@ -432,20 +472,23 @@ async function handleMigrate(request: Request): Promise<Response> {
         await mkdir(extractDir, { recursive: true });
 
         // Save uploaded zip with size validation
+        console.log(`\n📥 RECEIVING ZIP`);
         const arrayBuffer = await file.arrayBuffer();
         const zipSizeMB = arrayBuffer.byteLength / (1024 * 1024);
 
-        console.log(`Receiving zip: ${zipSizeMB.toFixed(2)} MB`);
+        console.log(`   📦 Size: ${zipSizeMB.toFixed(2)} MB`);
 
         if (zipSizeMB > config.maxZipSizeMB) {
             throw new Error(`Zip file too large (${zipSizeMB.toFixed(2)} MB). Maximum allowed: ${config.maxZipSizeMB} MB. Consider reducing zip_batch_size in WordPress settings.`);
         }
 
+        console.log(`   💾 Writing to disk...`);
         await writeFile(zipPath, Buffer.from(arrayBuffer));
 
         // Extract zip
-        console.log(`Extracting zip to ${extractDir}`);
+        console.log(`\n📂 EXTRACTING ZIP`);
         await extractZip(zipPath, extractDir);
+        console.log(`   ✅ Extraction complete`);
 
         // Read metadata.json
         const metadataPath = join(extractDir, 'metadata.json');
@@ -456,13 +499,20 @@ async function handleMigrate(request: Request): Promise<Response> {
         const metadataContent = await readFile(metadataPath, 'utf-8');
         const metadata: MigrationMetadata = JSON.parse(metadataContent);
 
-        console.log(`Migration ${metadata.migration_id}: ${metadata.attachments.length} attachments from ${metadata.site_url}`);
-        console.log(`Webhook URL: ${metadata.webhook_url}`);
+        console.log(`\n📋 MIGRATION METADATA`);
+        console.log(`   Migration ID: ${metadata.migration_id}`);
+        console.log(`   Attachments: ${metadata.attachments.length}`);
+        console.log(`   From: ${metadata.site_url}`);
+        console.log(`   Account: ${metadata.account_email}`);
 
         const totalBatches = Math.max(1, Math.ceil(metadata.attachments.length / Math.max(1, config.batchSize || 10)));
 
         // Send confirmation webhook IMMEDIATELY so user can close browser
         // This is critical - user doesn't need to wait for processing
+        console.log(`\n🔔 SENDING CONFIRMATION WEBHOOK`);
+        console.log(`   Status: RECEIVED (safe-to-quit confirmed)`);
+        console.log(`   Total batches to process: ${totalBatches}`);
+        
         try {
             const confirmSent = await sendWebhook(metadata.webhook_url, metadata.webhook_secret, {
                 migration_id: metadata.migration_id,
@@ -477,12 +527,12 @@ async function handleMigrate(request: Request): Promise<Response> {
             });
 
             if (confirmSent) {
-                console.log(`✅ Confirmation webhook sent for migration ${metadata.migration_id}. User can close browser.`);
+                console.log(`   ✅ User can close browser - processing continues in background`);
             } else {
-                console.warn(`⚠️ Confirmation webhook failed for migration ${metadata.migration_id}. Processing will continue anyway.`);
+                console.warn(`   ⚠️  Webhook delivery failed, but processing will continue`);
             }
         } catch (confirmError) {
-            console.error(`❌ Confirmation webhook error for migration ${metadata.migration_id}: ${confirmError}`);
+            console.error(`   ❌ Webhook error: ${confirmError}`);
             // Still continue with processing even if webhook fails
         }
 
@@ -492,12 +542,29 @@ async function handleMigrate(request: Request): Promise<Response> {
         })
             .then(async ({ results, errors }) => {
                 let status: 'completed' | 'partial' | 'failed';
+                let statusEmoji = '✅';
                 if (errors.length === 0) {
                     status = 'completed';
                 } else if (results.length > 0) {
                     status = 'partial';
+                    statusEmoji = '⚠️';
                 } else {
                     status = 'failed';
+                    statusEmoji = '❌';
+                }
+
+                console.log(`\n🏁 MIGRATION COMPLETE`);
+                console.log(`   ${statusEmoji} Status: ${status.toUpperCase()}`);
+                console.log(`   ✅ Passed: ${results.length}`);
+                console.log(`   ❌ Failed: ${errors.length}`);
+                if (errors.length > 0) {
+                    console.log(`   📋 Failed files:`);
+                    errors.slice(0, 5).forEach(err => {
+                        console.log(`      - Attachment #${err.attachment_id}: ${err.file}`);
+                    });
+                    if (errors.length > 5) {
+                        console.log(`      ... and ${errors.length - 5} more`);
+                    }
                 }
 
                 const finalPayload: WebhookPayload = {
@@ -510,6 +577,7 @@ async function handleMigrate(request: Request): Promise<Response> {
                     total_batches: totalBatches,
                 };
 
+                console.log(`\n🔔 SENDING FINAL WEBHOOK`);
                 const webhookSent = await sendWebhook(
                     metadata.webhook_url,
                     metadata.webhook_secret,
@@ -517,16 +585,22 @@ async function handleMigrate(request: Request): Promise<Response> {
                 );
 
                 if (!webhookSent) {
-                    console.error(`Failed to send final webhook for migration ${metadata.migration_id}`);
+                    console.error(`   ❌ Final webhook delivery failed`);
                 }
 
                 // Cleanup
+                console.log(`\n🧹 CLEANUP`);
+                console.log(`   Removing temporary files...`);
                 await rm(tempDir, { recursive: true, force: true });
+                console.log(`   ✅ Cleanup complete\n`);
             })
             .catch(async (error) => {
-                console.error(`Migration ${metadata.migration_id} failed:`, error);
+                console.error(`\n❌ MIGRATION ERROR`);
+                console.error(`   Migration ID: ${metadata.migration_id}`);
+                console.error(`   Error: ${(error as Error).message}`);
 
                 // Send error webhook
+                console.log(`\n🔔 SENDING ERROR WEBHOOK`);
                 await sendWebhook(metadata.webhook_url, metadata.webhook_secret, {
                     migration_id: metadata.migration_id,
                     status: 'failed',
@@ -535,7 +609,10 @@ async function handleMigrate(request: Request): Promise<Response> {
                 });
 
                 // Cleanup
+                console.log(`\n🧹 CLEANUP`);
+                console.log(`   Removing temporary files...`);
                 await rm(tempDir, { recursive: true, force: true });
+                console.log(`   ✅ Cleanup complete\n`);
             });
 
         // Return immediately
@@ -599,7 +676,9 @@ const server = Bun.serve({
         const url = new URL(request.url);
         const path = url.pathname;
 
-        console.log(`${request.method} ${path}`);
+        // Log incoming request
+        const methodEmoji = request.method === 'POST' ? '📤' : (request.method === 'GET' ? '📥' : '🔄');
+        console.log(`${methodEmoji} ${request.method.padEnd(6)} ${path}`);
 
         // CORS headers
         const corsHeaders = {
@@ -619,6 +698,7 @@ const server = Bun.serve({
             switch (path) {
                 case '/api/migrate':
                     if (request.method !== 'POST') {
+                        console.warn(`   ❌ Method not allowed`);
                         response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
                             status: 405,
                             headers: { 'Content-Type': 'application/json' },
@@ -630,6 +710,7 @@ const server = Bun.serve({
 
                 case '/health':
                 case '/api/health':
+                    console.log(`   🏥 Health check`);
                     response = await handleHealth();
                     break;
 
@@ -672,17 +753,45 @@ const server = Bun.serve({
     },
 });
 
-console.log(`🚀 BlitzCDN Middleware running at http://${config.host}:${config.port}`);
-console.log(`   Appwrite: ${config.appwrite.endpoint}`);
-console.log(`   Batch size: ${config.batchSize} attachments per callback`);
+console.log(`
+╔════════════════════════════════════════════════════════════════╗`);
+console.log(`║          🚀 BlitzCDN Middleware Server v1.0.0              ║`);
+console.log(`╚════════════════════════════════════════════════════════════════╝`);
+console.log(``);
+console.log(`📡 SERVER`);
+console.log(`   URL: http://${config.host}:${config.port}`);
+console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(``);
+console.log(`☁️  APPWRITE`);
+console.log(`   Endpoint: ${config.appwrite.endpoint}`);
+console.log(`   Project ID: ${config.appwrite.projectId ? '✓ Configured' : '✗ Missing'}`);
+console.log(`   Bucket ID: ${config.appwrite.bucketId ? '✓ Configured' : '✗ Missing'}`);
+console.log(``);
+console.log(`⚙️  MIGRATION`);
+console.log(`   Batch size: ${config.batchSize} attachments per webhook callback`);
 console.log(`   Parallel uploads: ${config.parallelUploads} concurrent files`);
-if (!config.tlsRejectUnauthorized) {
-    console.warn(`   ⚠️  TLS verification DISABLED (local dev mode)`);
+console.log(`   Max retries: ${config.maxRetries}`);
+console.log(`   Max zip size: ${config.maxZipSizeMB} MB`);
+console.log(``);
+console.log(`🔒 SECURITY`);
+if (config.apiKey) {
+    console.log(`   API Key: ✓ Configured`);
+} else {
+    console.log(`   API Key: ✗ Not set (all requests allowed)`);
 }
+if (!config.tlsRejectUnauthorized) {
+    console.warn(`   ⚠️  TLS verification: DISABLED (local dev mode only!)`);
+} else {
+    console.log(`   TLS verification: ✓ Enabled`);
+}
+console.log(``);
 
 // Validate config on startup
 const configErrors = validateConfig();
 if (configErrors.length > 0) {
-    console.warn('⚠️  Configuration warnings:');
-    configErrors.forEach(err => console.warn(`   - ${err}`));
+    console.warn(`⚠️  CONFIGURATION ISSUES:`);
+    configErrors.forEach(err => console.warn(`   ✗ ${err}`));
+    console.log(``);
+} else {
+    console.log(`✅ Configuration valid\n`);
 }
