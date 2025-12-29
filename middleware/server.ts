@@ -189,7 +189,7 @@ async function uploadWithRetry(
         } catch (error) {
             lastError = error as Error;
             const waitSeconds = Math.pow(2, attempt);
-            
+
             if (attempt < retries) {
                 console.warn(`  ⚠️  Upload attempt ${attempt}/${retries} failed: ${fileName}`);
                 console.warn(`      Reason: ${lastError.message}`);
@@ -374,7 +374,7 @@ async function sendWebhook(
     const statusLabel = payload.status.toUpperCase();
     const statusEmoji = payload.status === 'failed' ? '❌' : (payload.status === 'completed' ? '✅' : '📤');
     const statusColor = '🔵';
-    
+
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             // Configure fetch options
@@ -512,7 +512,7 @@ async function handleMigrate(request: Request): Promise<Response> {
         console.log(`\n🔔 SENDING CONFIRMATION WEBHOOK`);
         console.log(`   Status: RECEIVED (safe-to-quit confirmed)`);
         console.log(`   Total batches to process: ${totalBatches}`);
-        
+
         try {
             const confirmSent = await sendWebhook(metadata.webhook_url, metadata.webhook_secret, {
                 migration_id: metadata.migration_id,
