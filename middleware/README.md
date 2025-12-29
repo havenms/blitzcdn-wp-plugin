@@ -27,6 +27,22 @@ Copy `.env.example` to `.env` and configure:
 cp .env.example .env
 ```
 
+### Understanding Batch Settings
+
+The middleware uses two different "batch" concepts:
+
+1. **BATCH_SIZE** (default: 10) - Number of attachments processed per webhook callback
+   - After processing this many attachments, the middleware sends a webhook to WordPress
+   - WordPress updates postmeta for these attachments immediately
+   - Example: 2000 attachments = 200 webhook callbacks (2000 / 10)
+
+2. **PARALLEL_UPLOADS** (default: 5) - Concurrent file uploads within a batch
+   - While processing each batch, this many files upload simultaneously to Appwrite
+   - Higher values = faster uploads but more memory/connection usage
+   - Example: Processing batch of 10 attachments (~40 files with sizes) = 8 parallel upload rounds
+
+**Note**: The WordPress plugin's "Zip Batch Size" setting is different - it controls how many attachments to include in one zip file (separate from middleware batching).
+
 ### Environment Variables
 
 | Variable | Description | Required |
@@ -41,8 +57,10 @@ cp .env.example .env
 | `APPWRITE_DB_ID` | Database ID for tracking uploads (optional) | No |
 | `APPWRITE_COLLECTION_ID` | Collection ID for tracking uploads (optional) | No |
 | `APPWRITE_CDN_DOMAIN` | Custom CDN domain for file URLs | No |
-| `PARALLEL_UPLOADS` | Number of concurrent uploads (default: 5) | No |
+| `BATCH_SIZE` | Attachments per webhook callback batch (default: 10) | No |
+| `PARALLEL_UPLOADS` | Concurrent file uploads within each batch (default: 5) | No |
 | `MAX_RETRIES` | Max retry attempts for failed uploads (default: 3) | No |
+| `NODE_TLS_REJECT_UNAUTHORIZED` | Set to `0` to disable SSL verification (local dev only) | No |
 
 ## Running
 
@@ -53,6 +71,14 @@ bun run dev
 ```
 
 This runs the server with hot-reload enabled.
+
+**Local Development with Self-Signed SSL**: If your WordPress site uses a self-signed certificate (e.g., Local by Flywheel, Laravel Valet), add to `.env`:
+
+```bash
+NODE_TLS_REJECT_UNAUTHORIZED=0
+```
+
+⚠️ **Never use this in production** - it disables SSL certificate verification.
 
 ### Production
 

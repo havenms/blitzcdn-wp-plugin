@@ -22,6 +22,11 @@ class ZipMigrator {
     const REST_NAMESPACE = 'blitzcdn/v1';
 
     /**
+     * Fixed batch size the middleware processes per callback.
+     */
+    const MIDDLEWARE_BATCH_SIZE = 10;
+
+    /**
      * Constructor - register hooks.
      */
     public function __construct() {
@@ -241,6 +246,8 @@ class ZipMigrator {
         $zip->close();
 
         // Update migration status
+        $total_batches = (int) ceil((count($metadata['attachments']) ?: count($attachment_ids)) / self::MIDDLEWARE_BATCH_SIZE);
+
         $this->update_migration_status([
             'migration_id' => $migration_id,
             'status' => 'zip_created',
@@ -249,6 +256,11 @@ class ZipMigrator {
             'files_failed' => $files_failed,
             'attachment_count' => count($attachment_ids),
             'created_at' => current_time('timestamp'),
+            'total_batches' => $total_batches,
+            'current_batch' => 0,
+            'processed' => 0,
+            'failed' => 0,
+            'safe_to_quit' => false,
         ]);
 
         return [
@@ -341,9 +353,10 @@ class ZipMigrator {
         
         // Update status
         $this->update_migration_status([
-            'status' => 'processing',
+            'status' => 'awaiting_confirmation',
             'upload_completed_at' => current_time('timestamp'),
             'middleware_response' => $data,
+            'safe_to_quit' => false,
         ]);
 
         return $data;
@@ -372,16 +385,31 @@ class ZipMigrator {
         $results = $payload['results'] ?? [];
         $errors = $payload['errors'] ?? [];
 
-        // Update migration status
-        $this->update_migration_status([
-            'status' => $status === 'completed' ? 'webhook_received' : 'webhook_error',
+        $current_status = $this->get_migration_status();
+        $processed = isset($current_status['processed']) ? intval($current_status['processed']) : 0;
+        $failed = isset($current_status['failed']) ? intval($current_status['failed']) : 0;
+
+        $status_data = [
             'webhook_received_at' => current_time('timestamp'),
             'webhook_payload' => $payload,
-        ]);
+        ];
 
-        // Process results
-        $processed = 0;
-        $failed = 0;
+        if ($status === 'received') {
+            $status_data = array_merge($status_data, [
+                'status' => 'processing_remote',
+                'safe_to_quit' => true,
+                'current_batch' => 0,
+                'total_batches' => isset($payload['total_batches']) ? intval($payload['total_batches']) : ($current_status['total_batches'] ?? 0),
+                'last_message' => $payload['message'] ?? '',
+            ]);
+
+            $this->update_migration_status($status_data);
+
+            return new \WP_REST_Response([
+                'success' => true,
+                'message' => 'Migration receipt acknowledged.',
+            ], 200);
+        }
 
         foreach ($results as $result) {
             $attachment_id = $result['attachment_id'] ?? 0;
@@ -419,18 +447,50 @@ class ZipMigrator {
             $failed++;
         }
 
-        // Update final status
-        $this->update_migration_status([
-            'status' => 'completed',
+        if ($status === 'batch') {
+            $status_data = array_merge($status_data, [
+                'status' => 'processing_remote',
+                'safe_to_quit' => true,
+                'processed' => $processed,
+                'failed' => $failed,
+                'current_batch' => isset($payload['batch_number']) ? intval($payload['batch_number']) : ($current_status['current_batch'] ?? 0),
+                'total_batches' => isset($payload['total_batches']) ? intval($payload['total_batches']) : ($current_status['total_batches'] ?? 0),
+                'last_batch_at' => current_time('timestamp'),
+            ]);
+
+            $this->update_migration_status($status_data);
+
+            return new \WP_REST_Response([
+                'success' => true,
+                'message' => 'Batch processed successfully',
+                'processed' => $processed,
+                'failed' => $failed,
+            ], 200);
+        }
+
+        $final_status = 'completed';
+        if ($status === 'partial') {
+            $final_status = 'completed_with_errors';
+        } elseif ($status === 'failed') {
+            $final_status = 'failed';
+        }
+
+        $status_data = array_merge($status_data, [
+            'status' => $final_status,
             'completed_at' => current_time('timestamp'),
             'processed' => $processed,
             'failed' => $failed,
+            'safe_to_quit' => true,
+            'current_batch' => isset($payload['batch_number']) ? intval($payload['batch_number']) : ($current_status['current_batch'] ?? 0),
+            'total_batches' => isset($payload['total_batches']) ? intval($payload['total_batches']) : ($current_status['total_batches'] ?? 0),
         ]);
 
+        $this->update_migration_status($status_data);
+
         // Clean up zip file if it exists
-        $current_status = $this->get_migration_status();
-        if (!empty($current_status['zip_path']) && file_exists($current_status['zip_path'])) {
-            @unlink($current_status['zip_path']);
+        $latest_status = $this->get_migration_status();
+        if (!empty($latest_status['zip_path']) && file_exists($latest_status['zip_path'])) {
+            @unlink($latest_status['zip_path']);
         }
 
         // Trigger URL rewriting cache clear
@@ -478,6 +538,9 @@ class ZipMigrator {
             'total_files' => 0,
             'processed' => 0,
             'failed' => 0,
+            'total_batches' => 0,
+            'current_batch' => 0,
+            'safe_to_quit' => false,
         ]);
     }
 
@@ -519,14 +582,18 @@ class ZipMigrator {
             return $upload_result;
         }
 
+        $total_batches = isset($zip_result['metadata']['attachments']) ? (int) ceil(count($zip_result['metadata']['attachments']) / self::MIDDLEWARE_BATCH_SIZE) : (int) ceil(count($attachment_ids) / self::MIDDLEWARE_BATCH_SIZE);
+
         return [
             'success' => true,
             'migration_id' => $zip_result['migration_id'],
             // Report the number of attachments actually included in the zip (after capping files)
             'attachment_count' => isset($zip_result['metadata']['attachments']) ? count($zip_result['metadata']['attachments']) : count($attachment_ids),
             'files_added' => $zip_result['files_added'],
-            'status' => 'processing',
-            'message' => 'Migration started. Waiting for middleware to process files.',
+            'status' => 'awaiting_confirmation',
+            'safe_to_quit' => false,
+            'total_batches' => $total_batches,
+            'message' => 'Migration started. Zip sent to middleware. Wait for confirmation before closing this page.',
         ];
     }
 
