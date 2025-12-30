@@ -365,6 +365,23 @@ async function processMigration(
     return { results, errors };
 }
 
+// Transform local development URLs to be accessible from Docker container
+function transformWebhookUrl(url: string): { url: string; originalHostname?: string } {
+    try {
+        const urlObj = new URL(url);
+        // If it's a .local domain, replace with host.docker.internal
+        if (urlObj.hostname.endsWith('.local')) {
+            const originalHostname = urlObj.hostname;
+            urlObj.hostname = 'host.docker.internal';
+            return { url: urlObj.toString(), originalHostname };
+        }
+        return { url };
+    } catch {
+        // If URL parsing fails, return as-is
+        return { url };
+    }
+}
+
 async function sendWebhook(
     webhookUrl: string,
     webhookSecret: string,
@@ -375,16 +392,26 @@ async function sendWebhook(
     const statusEmoji = payload.status === 'failed' ? '❌' : (payload.status === 'completed' ? '✅' : '📤');
     const statusColor = '🔵';
 
+    // Transform .local URLs to use host.docker.internal
+    const { url: transformedUrl, originalHostname } = transformWebhookUrl(webhookUrl);
+
     for (let attempt = 1; attempt <= retries; attempt++) {
         try {
             // Configure fetch options
+            const headers: HeadersInit = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${webhookSecret}`,
+                'X-Webhook-Secret': webhookSecret,
+            };
+
+            // Preserve original hostname in Host header for virtual hosts
+            if (originalHostname) {
+                headers['Host'] = originalHostname;
+            }
+
             const fetchOptions: RequestInit = {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${webhookSecret}`,
-                    'X-Webhook-Secret': webhookSecret,
-                },
+                headers,
                 body: JSON.stringify(payload),
             };
 
@@ -394,7 +421,7 @@ async function sendWebhook(
                 fetchOptions.tls = { rejectUnauthorized: false };
             }
 
-            const response = await fetch(webhookUrl, fetchOptions);
+            const response = await fetch(transformedUrl, fetchOptions);
 
             if (response.ok) {
                 const details = payload.processed !== undefined ? ` (${payload.processed} processed, ${payload.failed} failed)` : '';

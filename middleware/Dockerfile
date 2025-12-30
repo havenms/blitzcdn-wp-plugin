@@ -2,6 +2,12 @@ FROM oven/bun:1
 
 WORKDIR /app
 
+# Install system dependencies (unzip for zip extraction, curl for healthcheck)
+RUN apt-get update && apt-get install -y \
+    unzip \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy package files
 COPY package.json bun.lockb* ./
 

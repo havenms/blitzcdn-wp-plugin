@@ -7,6 +7,9 @@ services:
     ports:
       - "3000:3000"
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "crazycatoutfitters-local.local:host-gateway"
     # Healthcheck is defined in the Dockerfile (checks /health)
     # Uncomment below if you prefer compose-managed healthcheck
     # healthcheck:
