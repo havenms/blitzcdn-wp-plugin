@@ -32,6 +32,7 @@ class Migrator {
         add_action('wp_ajax_blitzcdn_get_zip_migration_status', [$this, 'ajax_get_zip_migration_status_proxy']);
         add_action('wp_ajax_blitzcdn_get_zip_migration_stats', [$this, 'ajax_get_zip_migration_stats_proxy']);
         add_action('wp_ajax_blitzcdn_reset_zip_migration', [$this, 'ajax_reset_zip_migration_proxy']);
+        add_action('wp_ajax_blitzcdn_cancel_zip_migration', [$this, 'ajax_cancel_zip_migration_proxy']);
     }
 
     // Proxy methods for ZipMigrator AJAX handlers
@@ -53,6 +54,10 @@ class Migrator {
 
     public function ajax_reset_zip_migration_proxy() {
         Core::get_instance()->get_zip_migrator()->ajax_reset_zip_migration();
+    }
+
+    public function ajax_cancel_zip_migration_proxy() {
+        Core::get_instance()->get_zip_migrator()->ajax_cancel_zip_migration();
     }
 
     public function enqueue_scripts($hook) {

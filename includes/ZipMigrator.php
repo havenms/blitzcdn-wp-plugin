@@ -50,6 +50,14 @@ class ZipMigrator {
                 return current_user_can('manage_options');
             },
         ]);
+
+        register_rest_route(self::REST_NAMESPACE, '/cancel-migration', [
+            'methods' => 'POST',
+            'callback' => [$this, 'handle_cancel_migration_rest'],
+            'permission_callback' => function() {
+                return current_user_can('manage_options');
+            },
+        ]);
     }
 
     /**
@@ -517,6 +525,7 @@ class ZipMigrator {
                 'safe_to_quit' => true,
                 'processed' => $processed,
                 'failed' => $failed,
+                'total_files_uploaded' => isset($payload['total_files_uploaded']) ? intval($payload['total_files_uploaded']) : ($current_status['total_files_uploaded'] ?? 0),
                 'current_batch' => isset($payload['batch_number']) ? intval($payload['batch_number']) : ($current_status['current_batch'] ?? 0),
                 'total_batches' => isset($payload['total_batches']) ? intval($payload['total_batches']) : ($current_status['total_batches'] ?? 0),
                 'last_batch_at' => current_time('timestamp'),
@@ -537,6 +546,8 @@ class ZipMigrator {
             $final_status = 'completed_with_errors';
         } elseif ($status === 'failed') {
             $final_status = 'failed';
+        } elseif ($status === 'cancelled') {
+            $final_status = 'cancelled';
         }
 
         $status_data = array_merge($status_data, [
@@ -544,6 +555,7 @@ class ZipMigrator {
             'completed_at' => current_time('timestamp'),
             'processed' => $processed,
             'failed' => $failed,
+            'total_files_uploaded' => isset($payload['total_files_uploaded']) ? intval($payload['total_files_uploaded']) : ($current_status['total_files_uploaded'] ?? 0),
             'safe_to_quit' => true,
             'current_batch' => isset($payload['batch_number']) ? intval($payload['batch_number']) : ($current_status['current_batch'] ?? 0),
             'total_batches' => isset($payload['total_batches']) ? intval($payload['total_batches']) : ($current_status['total_batches'] ?? 0),
@@ -613,6 +625,7 @@ class ZipMigrator {
             'all_zips_uploaded' => false,
             'zipped_attachment_ids' => [],
             'has_more_batches' => false,
+            'total_files_uploaded' => 0,
         ]);
     }
 
@@ -942,5 +955,139 @@ class ZipMigrator {
 
         $this->reset_migration_status();
         wp_send_json_success(['message' => 'Migration status reset.']);
+    }
+
+    /**
+     * Cancel migration by notifying middleware.
+     * 
+     * @param string $migration_id The migration ID to cancel.
+     * @return array|WP_Error Result data or error.
+     */
+    public function cancel_migration($migration_id = '') {
+        $current_status = $this->get_migration_status();
+        
+        // Use current migration ID if not provided
+        if (empty($migration_id)) {
+            $migration_id = $current_status['migration_id'] ?? '';
+        }
+
+        if (empty($migration_id)) {
+            return new \WP_Error('no_migration', 'No active migration to cancel.');
+        }
+
+        $settings = get_option('blitzcdn_settings', []);
+        $middleware_url = $settings['middleware_url'] ?? '';
+        $middleware_api_key = $settings['middleware_api_key'] ?? '';
+
+        if (empty($middleware_url)) {
+            // Just cancel locally
+            $this->update_migration_status([
+                'status' => 'cancelled',
+                'cancelled_at' => current_time('timestamp'),
+                'message' => 'Migration cancelled locally (no middleware configured).',
+            ]);
+            return [
+                'success' => true,
+                'message' => 'Migration cancelled locally.',
+            ];
+        }
+
+        // Notify middleware to cancel
+        $endpoint = rtrim($middleware_url, '/') . '/api/cancel';
+        
+        $headers = [
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+        ];
+
+        if (!empty($middleware_api_key)) {
+            $headers['Authorization'] = 'Bearer ' . $middleware_api_key;
+        }
+
+        $response = wp_remote_post($endpoint, [
+            'headers' => $headers,
+            'body' => wp_json_encode(['migration_id' => $migration_id]),
+            'timeout' => 30,
+        ]);
+
+        if (is_wp_error($response)) {
+            // Still cancel locally even if middleware call fails
+            $this->update_migration_status([
+                'status' => 'cancelled',
+                'cancelled_at' => current_time('timestamp'),
+                'message' => 'Migration cancelled locally. Middleware notification failed: ' . $response->get_error_message(),
+            ]);
+            return [
+                'success' => true,
+                'message' => 'Migration cancelled locally. Middleware notification failed.',
+                'middleware_error' => $response->get_error_message(),
+            ];
+        }
+
+        $http_code = wp_remote_retrieve_response_code($response);
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+
+        // Update local status
+        $this->update_migration_status([
+            'status' => 'cancelled',
+            'cancelled_at' => current_time('timestamp'),
+            'message' => 'Migration cancelled.',
+            'middleware_response' => $data,
+        ]);
+
+        // Clean up zip file if it exists
+        if (!empty($current_status['zip_path']) && file_exists($current_status['zip_path'])) {
+            @unlink($current_status['zip_path']);
+        }
+
+        return [
+            'success' => true,
+            'message' => 'Migration cancelled successfully.',
+            'middleware_response' => $data,
+        ];
+    }
+
+    /**
+     * Handle cancel migration REST endpoint.
+     * 
+     * @param \WP_REST_Request $request The REST request.
+     * @return \WP_REST_Response The REST response.
+     */
+    public function handle_cancel_migration_rest($request) {
+        $params = $request->get_json_params();
+        $migration_id = $params['migration_id'] ?? '';
+
+        $result = $this->cancel_migration($migration_id);
+
+        if (is_wp_error($result)) {
+            return new \WP_REST_Response([
+                'success' => false,
+                'message' => $result->get_error_message(),
+            ], 400);
+        }
+
+        return new \WP_REST_Response($result, 200);
+    }
+
+    /**
+     * AJAX handler for cancelling migration.
+     */
+    public function ajax_cancel_zip_migration() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $migration_id = isset($_POST['migration_id']) ? sanitize_text_field($_POST['migration_id']) : '';
+        
+        $result = $this->cancel_migration($migration_id);
+
+        if (is_wp_error($result)) {
+            wp_send_json_error($result->get_error_message());
+        }
+
+        wp_send_json_success($result);
     }
 }
