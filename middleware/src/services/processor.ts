@@ -62,10 +62,20 @@ async function processAttachment(
         return { result: undefined, errors: [], filesUploaded: 0 };
     }
 
+    // Helper to abort if cancelled
+    const throwIfCancelled = async () => {
+        if (await checkCancelled()) {
+            throw new Error('MIGRATION_CANCELLED');
+        }
+    };
+
     // Upload original file
     const originalPath = join(extractDir, attachment.original_file);
     if (existsSync(originalPath)) {
         try {
+            // Check for cancellation before upload
+            await throwIfCancelled();
+            
             const fileId = await uploadWithRetry(
                 originalPath,
                 basename(attachment.original_file),
@@ -76,6 +86,10 @@ async function processAttachment(
             result.cdn_url = getCdnUrl(fileId);
             filesUploaded++;
         } catch (error) {
+            // Don't treat cancellation as an error
+            if ((error as Error).message === 'MIGRATION_CANCELLED') {
+                return { result: undefined, errors: [], filesUploaded };
+            }
             errors.push({
                 attachment_id: attachment.attachment_id,
                 file: attachment.original_file,
@@ -93,8 +107,11 @@ async function processAttachment(
     // Upload sizes
     for (const size of attachment.sizes) {
         // Check for cancellation between each size
-        if (await checkCancelled()) {
-            break;
+        try {
+            await throwIfCancelled();
+        } catch {
+            // Cancellation detected, return partial result
+            return { result: result.file_id ? result : undefined, errors, filesUploaded };
         }
 
         const sizePath = join(extractDir, size.file);
@@ -112,6 +129,10 @@ async function processAttachment(
                 };
                 filesUploaded++;
             } catch (error) {
+                // Don't treat cancellation as an error
+                if ((error as Error).message === 'MIGRATION_CANCELLED') {
+                    return { result: result.file_id ? result : undefined, errors, filesUploaded };
+                }
                 errors.push({
                     attachment_id: attachment.attachment_id,
                     file: size.file,
@@ -181,6 +202,11 @@ export async function processJob(job: MigrationJob): Promise<void> {
 
         const batchResults = await Promise.all(batchPromises);
 
+        // Check again after batch completes
+        if (await checkCancelled()) {
+            console.log(`   🚫 Migration cancelled during batch, will skip remaining batches`);
+        }
+
         const batchPayloadResults: UploadResult[] = [];
         const batchPayloadErrors: MigrationError[] = [];
         let batchSuccessCount = 0;
@@ -245,6 +271,12 @@ export async function processJob(job: MigrationJob): Promise<void> {
             failed: errors.length,
             total_files_uploaded: totalFilesUploaded,
         });
+
+        // Check for cancellation after webhook before proceeding
+        if (await checkCancelled()) {
+            console.log(`   🚫 Stopping after batch due to cancellation request`);
+            break;
+        }
     }
 
     // Check if cancelled
