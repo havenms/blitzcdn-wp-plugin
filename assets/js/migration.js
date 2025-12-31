@@ -1043,9 +1043,10 @@ if (typeof jQuery === 'undefined') {
             $('#blitzcdn-zip-processed').text(data.processed !== undefined ? data.processed : '-');
             $('#blitzcdn-zip-failed').text(data.failed !== undefined ? data.failed : '-');
 
-            // Show/hide cancel button based on migration status
-            if (zipMigrationInProgress && (data.status === 'uploading' || data.status === 'awaiting_confirmation' || 
-                data.status === 'processing' || data.status === 'processing_remote')) {
+            // Show/hide cancel button based on migration status (independent of JS state)
+            // Show cancel button whenever there's an active migration that can be cancelled
+            var cancellableStatuses = ['uploading', 'awaiting_confirmation', 'processing', 'processing_remote', 'zip_created', 'all_zips_uploaded'];
+            if (cancellableStatuses.indexOf(data.status) !== -1) {
                 $('#blitzcdn-zip-cancel-btn').show();
             } else {
                 $('#blitzcdn-zip-cancel-btn').hide();
