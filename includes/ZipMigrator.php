@@ -330,13 +330,14 @@ class ZipMigrator {
     }
 
     /**
-     * Upload zip file to middleware service.
+     * Upload zip file to middleware service with retry logic.
      * 
      * @param string $zip_path Path to the zip file.
      * @param string $migration_id Migration ID.
+     * @param int $max_retries Maximum number of retry attempts.
      * @return array|WP_Error Response data on success, WP_Error on failure.
      */
-    public function upload_zip_to_middleware($zip_path, $migration_id) {
+    public function upload_zip_to_middleware($zip_path, $migration_id, $max_retries = 3) {
         $settings = get_option('blitzcdn_settings', []);
         $middleware_url = $settings['middleware_url'] ?? '';
         $middleware_api_key = $settings['middleware_api_key'] ?? '';
@@ -348,6 +349,60 @@ class ZipMigrator {
         if (!file_exists($zip_path)) {
             return new \WP_Error('zip_not_found', 'Zip file not found: ' . $zip_path);
         }
+
+        $last_error = null;
+        
+        // Retry loop with exponential backoff
+        for ($attempt = 1; $attempt <= $max_retries; $attempt++) {
+            error_log("BlitzCDN: Upload attempt {$attempt}/{$max_retries} for migration {$migration_id}");
+            
+            $result = $this->attempt_upload($zip_path, $migration_id, $middleware_url, $middleware_api_key);
+            
+            if (!is_wp_error($result)) {
+                if ($attempt > 1) {
+                    error_log("BlitzCDN: Upload succeeded on attempt {$attempt}");
+                }
+                return $result;
+            }
+            
+            $last_error = $result;
+            $error_code = $result->get_error_code();
+            $error_message = $result->get_error_message();
+            
+            // Don't retry on certain errors
+            if (in_array($error_code, ['middleware_not_configured', 'zip_not_found'])) {
+                error_log("BlitzCDN: Non-retryable error: {$error_message}");
+                return $result;
+            }
+            
+            // For 413 (payload too large), don't retry - the zip is too big
+            if (strpos($error_message, 'HTTP 413') !== false) {
+                error_log("BlitzCDN: Zip too large (HTTP 413), cannot retry");
+                return $result;
+            }
+            
+            // If this isn't the last attempt, wait before retrying
+            if ($attempt < $max_retries) {
+                $wait_seconds = min(pow(2, $attempt - 1), 30); // Exponential backoff, max 30s
+                error_log("BlitzCDN: Upload failed: {$error_message}. Retrying in {$wait_seconds}s...");
+                sleep($wait_seconds);
+            }
+        }
+        
+        error_log("BlitzCDN: Upload failed after {$max_retries} attempts");
+        return $last_error;
+    }
+
+    /**
+     * Attempt a single upload to middleware.
+     * 
+     * @param string $zip_path Path to the zip file.
+     * @param string $migration_id Migration ID.
+     * @param string $middleware_url Middleware URL.
+     * @param string $middleware_api_key Middleware API key.
+     * @return array|WP_Error Response data on success, WP_Error on failure.
+     */
+    private function attempt_upload($zip_path, $migration_id, $middleware_url, $middleware_api_key) {
 
         // Update status
         $this->update_migration_status([

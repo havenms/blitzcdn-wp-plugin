@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BlitzCDN Media Offload
  * Plugin URI:  https://blitzcdn.net
- * Description: Offload Media Library files to Appwrite Storage and serve them through a CDN.
+ * Description: Offload Media Library files to BlitzCDN and serve them through our CDN.
  * Version:     1.0.0
  * Author:      BlitzCDN
  * Author URI:  https://blitzcdn.net

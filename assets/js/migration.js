@@ -640,7 +640,7 @@ if (typeof jQuery === 'undefined') {
             checkZipMigrationStatus();
         }
 
-        // Start zip migration
+        // Start zip migration with retry logic
         $(document).on('click', '#blitzcdn-zip-migrate-btn', function (e) {
             e.preventDefault();
 
@@ -658,6 +658,17 @@ if (typeof jQuery === 'undefined') {
             zipCurrentBatchConfirmed = false;
             zipLog('Starting fast migration...', 'info');
 
+            startZipMigrationWithRetry(0);
+        });
+
+        // Start migration with retry support
+        function startZipMigrationWithRetry(retryAttempt) {
+            var maxRetries = 3;
+            
+            if (retryAttempt > 0) {
+                zipLog('Retry attempt ' + retryAttempt + '/' + maxRetries + '...', 'warning');
+            }
+
             ajaxPost({
                 action: 'blitzcdn_start_zip_migration'
                 // Uses zip_batch_size from WordPress settings
@@ -665,16 +676,48 @@ if (typeof jQuery === 'undefined') {
                 if (response.success) {
                     handleZipBatchResponse(response.data, true);
                 } else {
-                    zipLog('Error: ' + response.data, 'error');
-                    zipMigrationInProgress = false;
-                    $btn.prop('disabled', false).text('🚀 Start Fast Migration');
+                    var errorMsg = response.data || 'Unknown error';
+                    
+                    // Check if error is retryable
+                    var isRetryable = errorMsg.indexOf('HTTP 413') === -1 && 
+                                     errorMsg.indexOf('Payload Too Large') === -1 &&
+                                     errorMsg.indexOf('too large') === -1;
+                    
+                    if (isRetryable && retryAttempt < maxRetries) {
+                        var waitSeconds = Math.pow(2, retryAttempt); // Exponential backoff
+                        zipLog('Error: ' + errorMsg, 'error');
+                        zipLog('Retrying in ' + waitSeconds + ' seconds...', 'warning');
+                        setTimeout(function() {
+                            startZipMigrationWithRetry(retryAttempt + 1);
+                        }, waitSeconds * 1000);
+                    } else {
+                        if (!isRetryable) {
+                            zipLog('Error: ' + errorMsg, 'error');
+                            zipLog('Cannot retry - zip file may be too large. Check middleware MAX_ZIP_SIZE_MB setting.', 'error');
+                        } else {
+                            zipLog('Error after ' + maxRetries + ' attempts: ' + errorMsg, 'error');
+                        }
+                        zipMigrationInProgress = false;
+                        $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    }
                 }
             }, function (xhr, status, error) {
-                zipLog('Network error: ' + error, 'error');
-                zipMigrationInProgress = false;
-                $btn.prop('disabled', false).text('🚀 Start Fast Migration');
+                var networkError = error || 'Network error';
+                
+                if (retryAttempt < maxRetries) {
+                    var waitSeconds = Math.pow(2, retryAttempt); // Exponential backoff
+                    zipLog('Network error: ' + networkError, 'error');
+                    zipLog('Retrying in ' + waitSeconds + ' seconds...', 'warning');
+                    setTimeout(function() {
+                        startZipMigrationWithRetry(retryAttempt + 1);
+                    }, waitSeconds * 1000);
+                } else {
+                    zipLog('Network error after ' + maxRetries + ' attempts: ' + networkError, 'error');
+                    zipMigrationInProgress = false;
+                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                }
             });
-        });
+        }
 
         // Handle response from starting or continuing a zip batch
         function handleZipBatchResponse(data, isFirstBatch) {
@@ -742,9 +785,17 @@ if (typeof jQuery === 'undefined') {
             });
         });
 
-        // Continue to next zip batch
-        function continueZipMigration() {
-            zipLog('Starting next zip batch...', 'info');
+        // Continue to next zip batch with retry logic
+        function continueZipMigration(retryAttempt) {
+            retryAttempt = retryAttempt || 0;
+            var maxRetries = 3;
+            
+            if (retryAttempt === 0) {
+                zipLog('Starting next zip batch...', 'info');
+            } else {
+                zipLog('Retry attempt ' + retryAttempt + '/' + maxRetries + '...', 'warning');
+            }
+            
             $('#blitzcdn-zip-migrate-btn').text('Uploading next batch...');
 
             ajaxPost({
@@ -753,14 +804,46 @@ if (typeof jQuery === 'undefined') {
                 if (response.success) {
                     handleZipBatchResponse(response.data, false);
                 } else {
-                    zipLog('Error continuing migration: ' + response.data, 'error');
+                    var errorMsg = response.data || 'Unknown error';
+                    
+                    // Check if error is retryable
+                    var isRetryable = errorMsg.indexOf('HTTP 413') === -1 && 
+                                     errorMsg.indexOf('Payload Too Large') === -1 &&
+                                     errorMsg.indexOf('too large') === -1;
+                    
+                    if (isRetryable && retryAttempt < maxRetries) {
+                        var waitSeconds = Math.pow(2, retryAttempt); // Exponential backoff: 1s, 2s, 4s
+                        zipLog('Error continuing migration: ' + errorMsg, 'error');
+                        zipLog('Retrying in ' + waitSeconds + ' seconds...', 'warning');
+                        setTimeout(function() {
+                            continueZipMigration(retryAttempt + 1);
+                        }, waitSeconds * 1000);
+                    } else {
+                        if (!isRetryable) {
+                            zipLog('Error continuing migration: ' + errorMsg, 'error');
+                            zipLog('Cannot retry - zip file may be too large. Check middleware MAX_ZIP_SIZE_MB setting.', 'error');
+                        } else {
+                            zipLog('Error continuing migration after ' + maxRetries + ' attempts: ' + errorMsg, 'error');
+                        }
+                        zipMigrationInProgress = false;
+                        $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    }
+                }
+            }, function (xhr, status, error) {
+                var networkError = error || 'Network error';
+                
+                if (retryAttempt < maxRetries) {
+                    var waitSeconds = Math.pow(2, retryAttempt); // Exponential backoff
+                    zipLog('Network error: ' + networkError, 'error');
+                    zipLog('Retrying in ' + waitSeconds + ' seconds...', 'warning');
+                    setTimeout(function() {
+                        continueZipMigration(retryAttempt + 1);
+                    }, waitSeconds * 1000);
+                } else {
+                    zipLog('Network error after ' + maxRetries + ' attempts: ' + networkError, 'error');
                     zipMigrationInProgress = false;
                     $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
                 }
-            }, function (xhr, status, error) {
-                zipLog('Network error continuing migration: ' + error, 'error');
-                zipMigrationInProgress = false;
-                $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
             });
         }
 
@@ -801,6 +884,9 @@ if (typeof jQuery === 'undefined') {
             }, function (response) {
                 if (response.success) {
                     updateZipStatusUI(response.data);
+                    
+                    // Reload stats to update unmigrated counts
+                    loadZipMigrationStats();
 
                     // If migration is in progress, start polling
                     var statusVal = response.data.status;
@@ -947,9 +1033,12 @@ if (typeof jQuery === 'undefined') {
 
             maybeNotifySafeToQuit(data);
 
-            // Add multi-batch info to status if available
+            // Add zip batch info to status if available (not middleware's internal batches)
             if (data.current_zip_batch && data.total_zip_batches) {
-                statusText += ' (Batch ' + data.current_zip_batch + '/' + data.total_zip_batches + ')';
+                statusText += ' (Zip Batch ' + data.current_zip_batch + '/' + data.total_zip_batches + ')';
+            } else if (data.webhook_payload && data.webhook_payload.batch_number && data.webhook_payload.total_batches) {
+                // Show middleware batch progress for current zip being processed
+                statusText += ' (Processing batch ' + data.webhook_payload.batch_number + '/' + data.webhook_payload.total_batches + ')';
             }
 
             $('#blitzcdn-zip-status-text').html('<span style="color: ' + statusColor + ';">' + statusText + '</span>');
