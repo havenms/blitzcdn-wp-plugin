@@ -21,6 +21,36 @@ define('BLITZCDN_PATH', plugin_dir_path(__FILE__));
 define('BLITZCDN_URL', plugin_dir_url(__FILE__));
 define('BLITZCDN_BASENAME', plugin_basename(__FILE__));
 
+// Load .env file if it exists (before any other initialization)
+$env_file = BLITZCDN_PATH . '.env';
+if (file_exists($env_file)) {
+    $env_lines = file($env_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    foreach ($env_lines as $line) {
+        // Skip lines that start with # (comments)
+        if (strpos(trim($line), '#') === 0) {
+            continue;
+        }
+        // Parse KEY=VALUE format
+        if (strpos($line, '=') !== false) {
+            list($key, $value) = explode('=', $line, 2);
+            $key = trim($key);
+            $value = trim($value);
+            // Strip inline comments (everything after # including the #)
+            $comment_pos = strpos($value, '#');
+            if ($comment_pos !== false) {
+                $value = trim(substr($value, 0, $comment_pos));
+            }
+            // Remove quotes if present
+            if ((strpos($value, '"') === 0 && strrpos($value, '"') === strlen($value) - 1) ||
+                (strpos($value, "'") === 0 && strrpos($value, "'") === strlen($value) - 1)) {
+                $value = substr($value, 1, -1);
+            }
+            // Set in $_ENV for getenv() compatibility
+            $_ENV[$key] = $value;
+        }
+    }
+}
+
 // Load Composer Autoloader
 if (file_exists(BLITZCDN_PATH . 'vendor/autoload.php')) {
     require_once BLITZCDN_PATH . 'vendor/autoload.php';
