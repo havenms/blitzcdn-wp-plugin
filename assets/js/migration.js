@@ -620,6 +620,7 @@ if (typeof jQuery === 'undefined') {
         var zipSafeToQuitAlertShown = false;
         var zipMigrationInProgress = false;
         var zipCurrentBatchConfirmed = false; // Track if current batch was confirmed by middleware
+        var zipTotalAssets = null; // Total assets (files) to process for current migration
 
         // Load initial stats for zip migration
         function loadZipMigrationStats() {
@@ -629,6 +630,13 @@ if (typeof jQuery === 'undefined') {
                 if (response.success) {
                     $('#blitzcdn-zip-total-attachments').text(response.data.total_attachments);
                     $('#blitzcdn-zip-total-assets').text(response.data.total_assets);
+                    zipTotalAssets = parseInt(response.data.total_assets, 10) || null;
+                    // Reset small stats UI
+                    $('#blitzcdn-zip-uploaded-count').text('-');
+                    $('#blitzcdn-zip-processed-count').text('-');
+                    $('#blitzcdn-zip-failed-count').text('-');
+                    $('#blitzcdn-zip-progress-bar').css('width', '0%');
+                    $('#blitzcdn-zip-progress-text').text('-');
                 }
             });
         }
@@ -723,7 +731,7 @@ if (typeof jQuery === 'undefined') {
         function handleZipBatchResponse(data, isFirstBatch) {
             if (data.all_zips_uploaded) {
                 zipLog('All attachments have been uploaded to middleware!', 'success');
-                zipLog('Migration processing will continue in the background.', 'info');
+                zipLog('Processing will continue in the background.', 'info');
                 zipMigrationInProgress = false;
                 $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
                 loadZipMigrationStats();
@@ -731,35 +739,24 @@ if (typeof jQuery === 'undefined') {
                 return;
             }
 
-            var batchInfo = 'Zip batch ' + (data.current_zip_batch || 1);
+            var batchInfo = 'Uploaded zip batch ' + (data.current_zip_batch || 1);
             if (data.total_zip_batches) {
-                batchInfo += ' of ~' + data.total_zip_batches;
+                batchInfo += ' of ' + data.total_zip_batches;
             }
+            zipLog(batchInfo, 'info');
 
-            zipLog(batchInfo + ' uploaded successfully!', 'success');
-            zipLog('Migration ID: ' + data.migration_id, 'info');
-            zipLog('Attachments in this batch: ' + data.attachment_count, 'info');
-
-            if (data.remaining_attachments > 0) {
-                zipLog('Remaining attachments after this batch: ' + data.remaining_attachments, 'info');
-            }
-
-            // Start polling for status (shows middleware processing progress)
+            // Start polling for status and update UI
             startZipStatusPolling();
             updateZipStatusUI(data);
 
-            // NON-BLOCKING: Immediately continue to next batch without waiting for middleware confirmation
-            // This ensures all zips are uploaded to queue regardless of middleware backlog
+            // Continue uploading next zip batch (non-blocking)
             if (data.has_more_batches || data.remaining_attachments > 0) {
-                zipLog('Queuing next batch upload (non-blocking mode)...', 'info');
-                // Small delay to allow UI update and prevent overwhelming the server
+                zipLog('Queuing next batch upload...', 'info');
                 setTimeout(function () {
                     continueZipMigration(0);
                 }, 500);
             } else {
-                // All batches uploaded
                 zipLog('All zip batches have been queued for upload!', 'success');
-                showAllZipsUploadedNotification();
             }
         }
 
@@ -913,7 +910,7 @@ if (typeof jQuery === 'undefined') {
             
             zipSafeToQuitAlertShown = true;
             zipLog('All zip batches uploaded! Processing continues in the background.', 'success');
-            alert('Good news! All zip batches have been uploaded to the middleware.\n\nYou can close this page now — the migration will keep running in the background.');
+            $('#blitzcdn-zip-safe-modal').show();
             
             zipMigrationInProgress = false;
             $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
@@ -924,19 +921,41 @@ if (typeof jQuery === 'undefined') {
         function maybeNotifySafeToQuit(data) {
             if (!data) return;
 
-            // Log middleware confirmation when received (informational only)
+            // Log middleware confirmation when received (informational only, once)
             if (data.safe_to_quit && !zipCurrentBatchConfirmed) {
                 zipCurrentBatchConfirmed = true;
                 zipLog('Middleware confirmed processing for batch.', 'info');
             }
             
-            // Check if all zips uploaded AND processing complete
-            if (data.all_zips_uploaded && (data.status === 'completed' || data.status === 'completed_with_errors')) {
+            // If processing is finished, show modal if not already shown
+            if (data.all_zips_uploaded && (data.status === 'completed' || data.status === 'completed_with_errors' || data.safe_to_quit)) {
                 if (!zipSafeToQuitAlertShown) {
                     showAllZipsUploadedNotification();
                 }
             }
         }
+
+        // Modal button handlers
+        $(document).on('click', '#blitzcdn-zip-modal-stay', function (e) {
+            e.preventDefault();
+            $('#blitzcdn-zip-safe-modal').hide();
+        });
+
+        $(document).on('click', '#blitzcdn-zip-modal-close', function (e) {
+            e.preventDefault();
+            $('#blitzcdn-zip-safe-modal').hide();
+            // Try to close the window programmatically; if blocked, just inform the user
+            try {
+                window.close();
+                setTimeout(function () {
+                    if (!window.closed) {
+                        alert('You can safely close this page now.');
+                    }
+                }, 200);
+            } catch (err) {
+                alert('You can safely close this page now.');
+            }
+        });
 
         function updateZipStatusUI(data) {
             if (!data || data.status === 'idle') {
@@ -948,7 +967,7 @@ if (typeof jQuery === 'undefined') {
             $('#blitzcdn-zip-migration-status').show();
             $('#blitzcdn-zip-reset-btn').show();
 
-            // Status text with color
+            // Simple friendly status mapping
             var statusText = data.status || '-';
             var statusColor = '#666';
             switch (data.status) {
@@ -962,12 +981,12 @@ if (typeof jQuery === 'undefined') {
                     break;
                 case 'awaiting_confirmation':
                     statusColor = '#17a2b8';
-                    statusText = '📤 Queued (uploading batches)';
+                    statusText = '📤 Queued';
                     break;
                 case 'processing':
                 case 'processing_remote':
                     statusColor = '#17a2b8';
-                    statusText = '🔄 Processing on middleware (server-side)';
+                    statusText = '🔄 Processing on middleware';
                     break;
                 case 'webhook_received':
                     statusColor = '#4ec9b0';
@@ -975,7 +994,7 @@ if (typeof jQuery === 'undefined') {
                     break;
                 case 'all_zips_uploaded':
                     statusColor = '#28a745';
-                    statusText = '✅ All batches uploaded (processing in background)';
+                    statusText = '✅ All batches uploaded';
                     zipMigrationInProgress = false;
                     $('#blitzcdn-zip-cancel-btn').hide();
                     break;
@@ -1020,31 +1039,36 @@ if (typeof jQuery === 'undefined') {
 
             maybeNotifySafeToQuit(data);
 
-            // Add zip batch info to status if available (not middleware's internal batches)
-            if (data.current_zip_batch && data.total_zip_batches) {
-                statusText += ' (Zip Batch ' + data.current_zip_batch + '/' + data.total_zip_batches + ')';
-            } else if (data.webhook_payload && data.webhook_payload.batch_number && data.webhook_payload.total_batches) {
-                // Show middleware batch progress for current zip being processed
-                statusText += ' (Processing batch ' + data.webhook_payload.batch_number + '/' + data.webhook_payload.total_batches + ')';
-            }
-
+            // Keep status concise (avoid per-batch confusing logs)
             $('#blitzcdn-zip-status-text').html('<span style="color: ' + statusColor + ';">' + statusText + '</span>');
             $('#blitzcdn-zip-migration-id').text(data.migration_id || '-');
-            
-            // Show total files uploaded (prefer direct value, fallback to webhook payload)
-            var totalFilesUploaded = '-';
-            if (data.total_files_uploaded !== undefined) {
-                totalFilesUploaded = data.total_files_uploaded;
-            } else if (data.webhook_payload && data.webhook_payload.total_files_uploaded !== undefined) {
-                totalFilesUploaded = data.webhook_payload.total_files_uploaded;
-            }
-            $('#blitzcdn-zip-files-uploaded').text(totalFilesUploaded);
-            
-            $('#blitzcdn-zip-processed').text(data.processed !== undefined ? data.processed : '-');
-            $('#blitzcdn-zip-failed').text(data.failed !== undefined ? data.failed : '-');
 
-            // Show/hide cancel button based on migration status (independent of JS state)
-            // Show cancel button whenever there's an active migration that can be cancelled
+            // Compute totals for the centralized progress
+            var totalAssets = zipTotalAssets || (parseInt($('#blitzcdn-zip-total-assets').text(), 10) || 0);
+            var uploaded = data.total_files_uploaded !== undefined ? parseInt(data.total_files_uploaded, 10) : (data.files_added !== undefined ? parseInt(data.files_added, 10) : 0);
+            var processed = data.processed !== undefined ? parseInt(data.processed, 10) : 0;
+            var failed = data.failed !== undefined ? parseInt(data.failed, 10) : 0;
+
+            // Update small stat cards
+            $('#blitzcdn-zip-uploaded-count').text(typeof uploaded === 'number' && uploaded >= 0 ? uploaded : '-');
+            $('#blitzcdn-zip-processed-count').text(typeof processed === 'number' && processed >= 0 ? processed : '-');
+            $('#blitzcdn-zip-failed-count').text(typeof failed === 'number' && failed >= 0 ? failed : '-');
+
+            // Progress is based on processed+failed out of total assets (represents completed work)
+            var completed = processed + failed;
+            var percent = 0;
+            if (totalAssets && totalAssets > 0) {
+                percent = Math.round((completed / totalAssets) * 100);
+            } else if (uploaded && data.total_files_uploaded !== undefined) {
+                // fallback: show uploaded proportion if totalAssets unknown
+                percent = Math.round((uploaded / Math.max(1, uploaded)) * 100);
+            }
+
+            percent = Math.max(0, Math.min(100, percent));
+            $('#blitzcdn-zip-progress-bar').css('width', percent + '%');
+            $('#blitzcdn-zip-progress-text').text(percent + '% — ' + completed + ' / ' + (totalAssets || '-') + ' processed');
+
+            // Show/hide cancel button based on migration status
             var cancellableStatuses = ['uploading', 'awaiting_confirmation', 'processing', 'processing_remote', 'zip_created', 'all_zips_uploaded'];
             if (cancellableStatuses.indexOf(data.status) !== -1) {
                 $('#blitzcdn-zip-cancel-btn').show();
@@ -1052,13 +1076,7 @@ if (typeof jQuery === 'undefined') {
                 $('#blitzcdn-zip-cancel-btn').hide();
             }
 
-            // Show overall progress for multi-batch migration
-            if (data.attachments_zipped !== undefined && data.total_attachments_to_migrate !== undefined) {
-                var overallProgress = data.attachments_zipped + '/' + data.total_attachments_to_migrate + ' attachments zipped';
-                $('#blitzcdn-zip-overall-progress').text(overallProgress);
-            }
-
-            // Log any errors from files_failed
+            // Log any file failures (only once)
             if (data.files_failed && data.files_failed.length > 0 && !data._files_failed_logged) {
                 data._files_failed_logged = true;
                 zipLog('Some files could not be added to zip:', 'warning');
@@ -1116,6 +1134,11 @@ if (typeof jQuery === 'undefined') {
 
             var $log = $('#blitzcdn-zip-migration-log');
             $log.append(logHtml);
+
+            // On warnings or errors, make the log visible so admins can inspect issues
+            if (type === 'error' || type === 'warning') {
+                $log.show();
+            }
 
             // Auto-scroll to bottom
             var logContainer = $log[0];

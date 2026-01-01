@@ -413,17 +413,7 @@ class Settings {
                 </p>
             </div>
             
-            <div style="background: #e7f3ff; border-left: 4px solid #2271b1; padding: 12px; margin: 15px 0; border-radius: 4px;">
-                <p style="margin: 0 0 8px 0; color: #333; font-weight: 500;">
-                    <strong>🚀 How Fast Migration Works</strong>
-                </p>
-                <ol style="margin: 0; padding-left: 20px; color: #555; font-size: 13px; line-height: 1.8;">
-                    <li>WordPress packages your media files into a zip archive</li>
-                    <li>The zip is uploaded to the middleware service</li>
-                    <li>Middleware processes files in parallel (much faster than sequential)</li>
-                    <li>Results are sent back via webhook to update your WordPress database</li>
-                </ol>
-            </div>
+
             
             <div id="blitzcdn-zip-stats" style="display: flex; gap: 20px; margin: 15px 0;">
                 <div style="background: #f0f0f1; padding: 15px 20px; border-radius: 4px; flex: 1;">
@@ -454,7 +444,35 @@ class Settings {
             <div id="blitzcdn-zip-migration-status" style="margin-top: 15px; display: none;">
                 <div style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; border-radius: 4px;">
                     <h4 style="margin: 0 0 10px 0;">Migration Status</h4>
-                    <table class="widefat" style="max-width: 600px;">
+
+                    <!-- Cleaner progress bar -->
+                    <div style="margin-bottom: 12px;">
+                        <div style="background: #f0f0f1; border: 1px solid #ccc; height: 18px; width: 100%; border-radius: 4px; overflow: hidden;">
+                            <div id="blitzcdn-zip-progress-bar" style="background: linear-gradient(90deg, #2271b1, #4ec9b0); height: 100%; width: 0%; transition: width 0.3s ease;"></div>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-weight:500;">
+                            <div id="blitzcdn-zip-progress-text">-</div>
+                            <div style="font-size:12px; color:#666;">Total assets: <span id="blitzcdn-zip-total-assets">-</span></div>
+                        </div>
+                    </div>
+
+                    <!-- Stat cards -->
+                    <div style="display:flex; gap:12px; margin-bottom: 8px;">
+                        <div style="flex:1; background:#e9f7ef; padding:10px; border-radius:4px; text-align:center;">
+                            <div style="font-size:20px; font-weight:bold; color:#155724;" id="blitzcdn-zip-uploaded-count">-</div>
+                            <div style="font-size:12px; color:#155724;">Uploaded</div>
+                        </div>
+                        <div style="flex:1; background:#fff3cd; padding:10px; border-radius:4px; text-align:center;">
+                            <div style="font-size:20px; font-weight:bold; color:#856404;" id="blitzcdn-zip-processed-count">-</div>
+                            <div style="font-size:12px; color:#856404;">Processed</div>
+                        </div>
+                        <div style="flex:1; background:#f8d7da; padding:10px; border-radius:4px; text-align:center;">
+                            <div style="font-size:20px; font-weight:bold; color:#721c24;" id="blitzcdn-zip-failed-count">-</div>
+                            <div style="font-size:12px; color:#721c24;">Failed</div>
+                        </div>
+                    </div>
+
+                    <table class="widefat" style="max-width: 600px; margin-top:6px;">
                         <tr>
                             <td><strong>Status:</strong></td>
                             <td><span id="blitzcdn-zip-status-text">-</span></td>
@@ -463,23 +481,24 @@ class Settings {
                             <td><strong>Migration ID:</strong></td>
                             <td><code id="blitzcdn-zip-migration-id">-</code></td>
                         </tr>
-                        <tr>
-                            <td><strong>Total Files Uploaded:</strong></td>
-                            <td><span id="blitzcdn-zip-files-uploaded">-</span></td>
-                        </tr>
-                        <tr>
-                            <td><strong>Processed:</strong></td>
-                            <td><span id="blitzcdn-zip-processed">-</span></td>
-                        </tr>
-                        <tr>
-                            <td><strong>Failed:</strong></td>
-                            <td><span id="blitzcdn-zip-failed">-</span></td>
-                        </tr>
                     </table>
                 </div>
             </div>
-            
+
+            <!-- Hidden detailed log (only used for errors / debugging) -->
             <div id="blitzcdn-zip-migration-log" style="max-height: 300px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; border: 1px solid #333; padding: 15px; margin-top: 15px; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; border-radius: 4px; display: none;"></div>
+
+            <!-- Safe-to-quit modal -->
+            <div id="blitzcdn-zip-safe-modal" style="display:none; position:fixed; left:0; right:0; top:0; bottom:0; background:rgba(0,0,0,0.5); z-index:10000;">
+                <div style="max-width:520px; margin:60px auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 10px 30px rgba(0,0,0,0.3);">
+                    <h3 style="margin-top:0;">All zip batches uploaded</h3>
+                    <p>The middleware has received all zip batches and processing will continue in the background. You can safely close this page.</p>
+                    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:18px;">
+                        <button type="button" id="blitzcdn-zip-modal-stay" class="button">Stay and Monitor</button>
+                        <button type="button" id="blitzcdn-zip-modal-close" class="button button-primary">Close Page</button>
+                    </div>
+                </div>
+            </div>
         <?php endif; ?>
         <?php
     }
