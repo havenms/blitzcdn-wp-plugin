@@ -142,6 +142,14 @@ async function init() {
             console.log('\n🔧 Starting worker for pending jobs...');
             startWorker().catch(console.error);
         }
+
+        // Start webhook retry worker if there are persisted failed webhooks
+        const failedWebhookCount = await queueService.getFailedWebhookCount();
+        if (failedWebhookCount > 0) {
+            console.log(`\n🔁 Found ${failedWebhookCount} failed webhooks - starting webhook retry worker...`);
+        }
+        // Always start webhook retry worker so it can pick up new failures
+        import('./services/webhookRetry').then(mod => mod.startWebhookRetryWorker().catch(console.error));
     } catch (e) {
         console.error('   ⚠️  Queue initialization failed (Redis may not be available)');
         console.error(`   Error: ${(e as Error).message}`);

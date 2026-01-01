@@ -915,14 +915,30 @@ if (typeof jQuery === 'undefined') {
             }, function (response) {
                 if (response.success) {
                     updateZipStatusUI(response.data);
-                    
+
                     // Reload stats to update unmigrated counts
                     loadZipMigrationStats();
 
-                    // If migration is in progress, start polling
-                    var statusVal = response.data.status;
+                    // Decide whether to poll: keep polling when there is an active migration
+                    var statusVal = response.data && response.data.status;
+                    var hasMigrationFields = response.data && (
+                        response.data.migration_id || response.data.attachments_zipped || response.data.total_attachments_to_migrate || response.data.total_files_uploaded
+                    );
+
+                    var shouldPoll = false;
                     if (statusVal && statusVal !== 'idle' && statusVal !== 'completed' && statusVal !== 'completed_with_errors' && statusVal !== 'failed') {
+                        shouldPoll = true;
+                    }
+
+                    // Also poll if we have migration metadata even if status is 'idle' (prevents flicker)
+                    if (!shouldPoll && hasMigrationFields) {
+                        shouldPoll = true;
+                    }
+
+                    if (shouldPoll) {
                         startZipStatusPolling();
+                    } else {
+                        stopZipStatusPolling();
                     }
                 }
             });
@@ -982,12 +998,23 @@ if (typeof jQuery === 'undefined') {
         });
 
         function updateZipStatusUI(data) {
-            if (!data || data.status === 'idle') {
+            // Consider the state "empty" only when there's no migration information at all.
+            var hasMigrationId = data && data.migration_id;
+            var hasAnyTotals = data && (
+                (data.total_attachments_to_migrate && data.total_attachments_to_migrate > 0) ||
+                (data.attachments_zipped && data.attachments_zipped > 0) ||
+                (data.total_files_uploaded && data.total_files_uploaded > 0)
+            );
+
+            var isTrulyEmpty = !data || (data.status === 'idle' && !hasMigrationId && !hasAnyTotals);
+            if (isTrulyEmpty) {
+                // No active migration data to display — hide the panel
                 $('#blitzcdn-zip-migration-status').hide();
                 $('#blitzcdn-zip-reset-btn').hide();
                 return;
             }
 
+            // Show status panel if we have any migration info (even if status is briefly 'idle')
             $('#blitzcdn-zip-migration-status').show();
             $('#blitzcdn-zip-reset-btn').show();
 

@@ -13,6 +13,7 @@ const JOBS_KEY = 'blitzcdn:jobs';
 const MIGRATIONS_KEY = 'blitzcdn:migrations';
 const QUEUE_KEY = 'blitzcdn:queue';
 const PROCESSING_KEY = 'blitzcdn:processing';
+const FAILED_WEBHOOKS_KEY = 'blitzcdn:failed_webhooks';
 
 class QueueService {
     private client: RedisClientType | null = null;
@@ -325,6 +326,24 @@ class QueueService {
         }
 
         return cleaned;
+    }
+
+    // ============ Failed Webhook Persistence ============
+
+    async pushFailedWebhook(entry: Record<string, any>): Promise<void> {
+        this.ensureConnected();
+        // Add minimal fields: id, webhook_url, webhook_secret, payload, attempts
+        await this.client!.rPush(FAILED_WEBHOOKS_KEY, JSON.stringify(entry));
+    }
+
+    async popFailedWebhook(): Promise<string | null> {
+        this.ensureConnected();
+        return await this.client!.lPop(FAILED_WEBHOOKS_KEY);
+    }
+
+    async getFailedWebhookCount(): Promise<number> {
+        this.ensureConnected();
+        return await this.client!.lLen(FAILED_WEBHOOKS_KEY);
     }
 
     // ============ Stats ============

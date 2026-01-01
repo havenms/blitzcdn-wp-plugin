@@ -26,6 +26,55 @@ function transformWebhookUrl(url: string): { url: string; originalHostname?: str
     }
 }
 
+import { queueService } from './queue';
+
+export async function sendWebhookOnce(
+    webhookUrl: string,
+    webhookSecret: string,
+    payload: WebhookPayload
+): Promise<boolean> {
+    const { url: transformedUrl, originalHostname } = transformWebhookUrl(webhookUrl);
+
+    try {
+        const headers: HeadersInit = {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${webhookSecret}`,
+            'X-Webhook-Secret': webhookSecret,
+        };
+
+        if (originalHostname) {
+            headers['Host'] = originalHostname;
+        }
+
+        const fetchOptions: RequestInit = {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+        };
+
+        if (!config.tlsRejectUnauthorized) {
+            // @ts-expect-error - Bun-specific option
+            fetchOptions.tls = { rejectUnauthorized: false };
+        }
+
+        const response = await fetch(transformedUrl, fetchOptions);
+        if (response.ok) {
+            const details = payload.processed !== undefined 
+                ? ` (${payload.processed} processed, ${payload.failed} failed)` 
+                : '';
+            console.log(`   📤 ${payload.status.toUpperCase()} webhook sent${details}`);
+            return true;
+        }
+
+        const text = await response.text();
+        console.warn(`   ⚠️  Webhook failed: HTTP ${response.status} - ${text.substring(0, 100)}...`);
+        return false;
+    } catch (error) {
+        console.warn(`   ⚠️  Webhook error: ${(error as Error).message}`);
+        return false;
+    }
+}
+
 export async function sendWebhook(
     webhookUrl: string,
     webhookSecret: string,
@@ -38,64 +87,36 @@ export async function sendWebhook(
                        payload.status === 'cancelled' ? '🚫' : '📤';
 
     // Transform .local URLs to use host.docker.internal
-    const { url: transformedUrl, originalHostname } = transformWebhookUrl(webhookUrl);
+    const { url: transformedUrl } = transformWebhookUrl(webhookUrl);
 
     for (let attempt = 1; attempt <= retries; attempt++) {
-        try {
-            // Configure fetch options
-            const headers: HeadersInit = {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${webhookSecret}`,
-                'X-Webhook-Secret': webhookSecret,
-            };
+        const ok = await sendWebhookOnce(webhookUrl, webhookSecret, payload);
+        if (ok) return true;
 
-            // Preserve original hostname in Host header for virtual hosts
-            if (originalHostname) {
-                headers['Host'] = originalHostname;
-            }
-
-            const fetchOptions: RequestInit = {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(payload),
-            };
-
-            // Disable TLS verification for local dev if configured
-            if (!config.tlsRejectUnauthorized) {
-                // @ts-expect-error - Bun-specific option not in standard RequestInit
-                fetchOptions.tls = { rejectUnauthorized: false };
-            }
-
-            const response = await fetch(transformedUrl, fetchOptions);
-
-            if (response.ok) {
-                const details = payload.processed !== undefined 
-                    ? ` (${payload.processed} processed, ${payload.failed} failed)` 
-                    : '';
-                console.log(`   ${statusEmoji} ${statusLabel} webhook sent${details}`);
-                return true;
-            }
-
-            const text = await response.text();
-            const waitSeconds = Math.pow(2, attempt);
-            if (attempt < retries) {
-                console.warn(`   ⚠️  Webhook attempt ${attempt}/${retries} failed: HTTP ${response.status}`);
-                console.warn(`       Retrying in ${waitSeconds}s...`);
-                await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
-            } else {
-                console.error(`   ❌ Webhook failed (all ${retries} attempts): HTTP ${response.status}`);
-                console.error(`       Response: ${text.substring(0, 100)}...`);
-            }
-        } catch (error) {
-            const waitSeconds = Math.pow(2, attempt);
-            if (attempt < retries) {
-                console.warn(`   ⚠️  Webhook attempt ${attempt}/${retries} error: ${(error as Error).message}`);
-                console.warn(`       Retrying in ${waitSeconds}s...`);
-                await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
-            } else {
-                console.error(`   ❌ Webhook failed: ${(error as Error).message}`);
-            }
+        const waitSeconds = Math.pow(2, attempt);
+        if (attempt < retries) {
+            console.warn(`   ⚠️  Webhook attempt ${attempt}/${retries} failed. Retrying in ${waitSeconds}s...`);
+            await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
         }
+    }
+
+    // Final failure: persist to Redis failed webhook queue for later retries
+    try {
+        const id = (typeof globalThis !== 'undefined' && (globalThis as any).crypto && (globalThis as any).crypto.randomUUID)
+            ? (globalThis as any).crypto.randomUUID()
+            : `fh_${Date.now()}`;
+        const entry = {
+            id,
+            webhook_url: transformedUrl,
+            webhook_secret: webhookSecret,
+            payload,
+            attempts: retries,
+            created_at: new Date().toISOString(),
+        };
+        await queueService.pushFailedWebhook(entry);
+        console.error(`   ❌ Webhook failed after ${retries} attempts — queued for retry (id=${entry.id})`);
+    } catch (e) {
+        console.error('   ❌ Failed to persist failed webhook for retry:', (e as Error).message);
     }
 
     return false;
