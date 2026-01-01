@@ -242,9 +242,8 @@ class Settings {
                 ?>
             </form>
             
-            <hr>
-            
             <?php if (!$hide_classic_migration): ?>
+            <hr>
             <h2>Migration Tool</h2>
             
             <?php if (!$is_configured): ?>
