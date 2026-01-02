@@ -988,3 +988,4 @@ This plugin is licensed under the GPL-2.0-or-later License.
 ---
 
 **BlitzCDN** — Media offloading for WordPress, powered by Appwrite.
+`zip -r blitzcdn.zip . -x "node-scripts/*" "middleware/*"`
