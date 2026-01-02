@@ -426,7 +426,7 @@ class Settings {
             </div>
             
             <p>
-                <button type="button" id="blitzcdn-zip-migrate-btn" class="button button-primary" data-nonce="<?php echo esc_attr(wp_create_nonce('blitzcdn_migration_nonce')); ?>" data-ajax-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>">
+                <button type="button" id="blitzcdn-zip-migrate-btn" class="button button-primary" disabled title="Loading attachment count..." data-nonce="<?php echo esc_attr(wp_create_nonce('blitzcdn_migration_nonce')); ?>" data-ajax-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>">
                     🚀 Start Fast Migration
                 </button>
                 <button type="button" id="blitzcdn-zip-check-status-btn" class="button button-secondary" data-nonce="<?php echo esc_attr(wp_create_nonce('blitzcdn_migration_nonce')); ?>" data-ajax-url="<?php echo esc_url(admin_url('admin-ajax.php')); ?>">

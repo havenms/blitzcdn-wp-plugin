@@ -684,6 +684,9 @@ if (typeof jQuery === 'undefined') {
                             $('#blitzcdn-zip-uploaded-count').text(zipTotalAssets);
                         }
                     }
+
+                    // Ensure Start button state matches the latest attachment count
+                    updateZipStartButtonByCount();
                 }
             });
         }
@@ -693,6 +696,16 @@ if (typeof jQuery === 'undefined') {
             loadZipMigrationStats();
             // Also check current status
             checkZipMigrationStatus();
+        }
+
+        // Update start button enabled/disabled state based on the current attachment count
+        function updateZipStartButtonByCount() {
+            var attachments = parseInt($('#blitzcdn-zip-total-attachments').text(), 10);
+            if (isNaN(attachments) || attachments <= 0) {
+                $('#blitzcdn-zip-migrate-btn').prop('disabled', true).text('🚫 No attachments to migrate').attr('title', 'No attachments to migrate');
+            } else {
+                $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration').removeAttr('title');
+            }
         }
 
         // Start zip migration with retry logic
@@ -755,7 +768,7 @@ if (typeof jQuery === 'undefined') {
                             zipLog('Error after ' + maxRetries + ' attempts: ' + errorMsg, 'error');
                         }
                         zipMigrationInProgress = false;
-                        $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                        updateZipStartButtonByCount();
                     }
                 }
             }, function (xhr, status, error) {
@@ -771,7 +784,7 @@ if (typeof jQuery === 'undefined') {
                 } else {
                     zipLog('Network error after ' + maxRetries + ' attempts: ' + networkError, 'error');
                     zipMigrationInProgress = false;
-                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    updateZipStartButtonByCount();
                 }
             });
         }
@@ -787,7 +800,7 @@ if (typeof jQuery === 'undefined') {
                 zipLog('All attachments have been uploaded to middleware!', 'success');
                 zipLog('Processing will continue in the background.', 'info');
                 zipMigrationInProgress = false;
-                $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                updateZipStartButtonByCount();
 
                 // Mark final state so subsequent polls don't clear the UI
                 zipFinalized = true;
@@ -850,7 +863,7 @@ if (typeof jQuery === 'undefined') {
                     zipLog('Migration cancelled.', 'warning');
                     zipMigrationInProgress = false;
                     stopZipStatusPolling();
-                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    updateZipStartButtonByCount();
                     $btn.prop('disabled', false).text('🛑 Cancel Migration').hide();
                     $('#blitzcdn-zip-migration-status').hide();
                     loadZipMigrationStats();
@@ -905,7 +918,7 @@ if (typeof jQuery === 'undefined') {
                             zipLog('Error continuing migration after ' + maxRetries + ' attempts: ' + errorMsg, 'error');
                         }
                         zipMigrationInProgress = false;
-                        $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                        updateZipStartButtonByCount();
                     }
                 }
             }, function (xhr, status, error) {
@@ -921,7 +934,7 @@ if (typeof jQuery === 'undefined') {
                 } else {
                     zipLog('Network error after ' + maxRetries + ' attempts: ' + networkError, 'error');
                     zipMigrationInProgress = false;
-                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    updateZipStartButtonByCount();
                 }
             });
         }
@@ -951,7 +964,7 @@ if (typeof jQuery === 'undefined') {
                     zipFinalized = false; // allow UI to be reset after reset
                     $('#blitzcdn-zip-migration-status').hide();
                     $('#blitzcdn-zip-reset-btn').hide();
-                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    updateZipStartButtonByCount();
                     loadZipMigrationStats();
                 } else {
                     zipLog('Error resetting: ' + response.data, 'error');
@@ -1003,7 +1016,7 @@ if (typeof jQuery === 'undefined') {
             $('#blitzcdn-zip-safe-modal').show();
             
             zipMigrationInProgress = false;
-            $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+            updateZipStartButtonByCount();
             loadZipMigrationStats();
         }
 
@@ -1116,7 +1129,7 @@ if (typeof jQuery === 'undefined') {
                     stopZipStatusPolling();
                     zipMigrationInProgress = false;
                     zipFinalized = true; // freeze the UI on success
-                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    updateZipStartButtonByCount();
                     $('#blitzcdn-zip-cancel-btn').hide();
                     // Force a stable completed UI state
                     $('#blitzcdn-zip-progress-bar').css('width','100%').css('background','linear-gradient(90deg, #28a745, #4ec9b0)');
@@ -1129,7 +1142,7 @@ if (typeof jQuery === 'undefined') {
                     stopZipStatusPolling();
                     zipMigrationInProgress = false;
                     zipFinalized = true; // freeze the UI on final-with-errors
-                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    updateZipStartButtonByCount();
                     $('#blitzcdn-zip-cancel-btn').hide();
                     // Force a stable completed-with-errors UI state
                     $('#blitzcdn-zip-progress-bar').css('width','100%').css('background','linear-gradient(90deg, #ffc107, #ffdf7e)');
@@ -1141,7 +1154,7 @@ if (typeof jQuery === 'undefined') {
                     statusText = '🛑 Cancelled';
                     stopZipStatusPolling();
                     zipMigrationInProgress = false;
-                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    updateZipStartButtonByCount();
                     $('#blitzcdn-zip-cancel-btn').hide();
                     loadZipMigrationStats();
                     break;
@@ -1152,7 +1165,7 @@ if (typeof jQuery === 'undefined') {
                     statusText = '❌ Error: ' + (data.error || data.message || data.status);
                     stopZipStatusPolling();
                     zipMigrationInProgress = false;
-                    $('#blitzcdn-zip-migrate-btn').prop('disabled', false).text('🚀 Start Fast Migration');
+                    updateZipStartButtonByCount();
                     $('#blitzcdn-zip-cancel-btn').hide();
                     break;
             }
