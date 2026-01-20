@@ -734,7 +734,7 @@ if (typeof jQuery === 'undefined') {
         // Start migration with retry support
         function startZipMigrationWithRetry(retryAttempt) {
             var maxRetries = 3;
-            
+
             if (retryAttempt > 0) {
                 zipLog('Retry attempt ' + retryAttempt + '/' + maxRetries + '...', 'warning');
             }
@@ -747,17 +747,17 @@ if (typeof jQuery === 'undefined') {
                     handleZipBatchResponse(response.data, true);
                 } else {
                     var errorMsg = response.data || 'Unknown error';
-                    
+
                     // Check if error is retryable
-                    var isRetryable = errorMsg.indexOf('HTTP 413') === -1 && 
-                                     errorMsg.indexOf('Payload Too Large') === -1 &&
-                                     errorMsg.indexOf('too large') === -1;
-                    
+                    var isRetryable = errorMsg.indexOf('HTTP 413') === -1 &&
+                        errorMsg.indexOf('Payload Too Large') === -1 &&
+                        errorMsg.indexOf('too large') === -1;
+
                     if (isRetryable && retryAttempt < maxRetries) {
                         var waitSeconds = Math.pow(2, retryAttempt); // Exponential backoff
                         zipLog('Error: ' + errorMsg, 'error');
                         zipLog('Retrying in ' + waitSeconds + ' seconds...', 'warning');
-                        setTimeout(function() {
+                        setTimeout(function () {
                             startZipMigrationWithRetry(retryAttempt + 1);
                         }, waitSeconds * 1000);
                     } else {
@@ -773,12 +773,12 @@ if (typeof jQuery === 'undefined') {
                 }
             }, function (xhr, status, error) {
                 var networkError = error || 'Network error';
-                
+
                 if (retryAttempt < maxRetries) {
                     var waitSeconds = Math.pow(2, retryAttempt); // Exponential backoff
                     zipLog('Network error: ' + networkError, 'error');
                     zipLog('Retrying in ' + waitSeconds + ' seconds...', 'warning');
-                    setTimeout(function() {
+                    setTimeout(function () {
                         startZipMigrationWithRetry(retryAttempt + 1);
                     }, waitSeconds * 1000);
                 } else {
@@ -881,13 +881,13 @@ if (typeof jQuery === 'undefined') {
         function continueZipMigration(retryAttempt) {
             retryAttempt = retryAttempt || 0;
             var maxRetries = 3;
-            
+
             if (retryAttempt === 0) {
                 zipLog('Uploading next zip batch...', 'info');
             } else {
                 zipLog('Retry attempt ' + retryAttempt + '/' + maxRetries + '...', 'warning');
             }
-            
+
             $('#blitzcdn-zip-migrate-btn').text('Uploading batches...');
 
             ajaxPost({
@@ -897,17 +897,17 @@ if (typeof jQuery === 'undefined') {
                     handleZipBatchResponse(response.data, false);
                 } else {
                     var errorMsg = response.data || 'Unknown error';
-                    
+
                     // Check if error is retryable
-                    var isRetryable = errorMsg.indexOf('HTTP 413') === -1 && 
-                                     errorMsg.indexOf('Payload Too Large') === -1 &&
-                                     errorMsg.indexOf('too large') === -1;
-                    
+                    var isRetryable = errorMsg.indexOf('HTTP 413') === -1 &&
+                        errorMsg.indexOf('Payload Too Large') === -1 &&
+                        errorMsg.indexOf('too large') === -1;
+
                     if (isRetryable && retryAttempt < maxRetries) {
                         var waitSeconds = Math.pow(2, retryAttempt); // Exponential backoff: 1s, 2s, 4s
                         zipLog('Error continuing migration: ' + errorMsg, 'error');
                         zipLog('Retrying in ' + waitSeconds + ' seconds...', 'warning');
-                        setTimeout(function() {
+                        setTimeout(function () {
                             continueZipMigration(retryAttempt + 1);
                         }, waitSeconds * 1000);
                     } else {
@@ -923,12 +923,12 @@ if (typeof jQuery === 'undefined') {
                 }
             }, function (xhr, status, error) {
                 var networkError = error || 'Network error';
-                
+
                 if (retryAttempt < maxRetries) {
                     var waitSeconds = Math.pow(2, retryAttempt); // Exponential backoff
                     zipLog('Network error: ' + networkError, 'error');
                     zipLog('Retrying in ' + waitSeconds + ' seconds...', 'warning');
-                    setTimeout(function() {
+                    setTimeout(function () {
                         continueZipMigration(retryAttempt + 1);
                     }, waitSeconds * 1000);
                 } else {
@@ -987,10 +987,17 @@ if (typeof jQuery === 'undefined') {
                     var hasMigrationFields = response.data && (
                         response.data.migration_id || response.data.attachments_zipped || response.data.total_attachments_to_migrate || response.data.total_files_uploaded
                     );
+                    var allZipsUploaded = response.data && response.data.all_zips_uploaded;
 
                     var shouldPoll = false;
-                    if (statusVal && statusVal !== 'idle' && statusVal !== 'completed' && statusVal !== 'completed_with_errors' && statusVal !== 'failed') {
-                        shouldPoll = true;
+                    // Keep polling if status is 'completed' but not all zips are uploaded yet
+                    if (statusVal && statusVal !== 'idle' && statusVal !== 'failed') {
+                        // For 'completed' and 'completed_with_errors', only stop polling if ALL zips are done
+                        if ((statusVal === 'completed' || statusVal === 'completed_with_errors') && !allZipsUploaded) {
+                            shouldPoll = true;
+                        } else if (statusVal !== 'completed' && statusVal !== 'completed_with_errors') {
+                            shouldPoll = true;
+                        }
                     }
 
                     // Also poll if we have migration metadata even if status is 'idle' (prevents flicker)
@@ -1010,11 +1017,11 @@ if (typeof jQuery === 'undefined') {
         // Show notification when all zips are uploaded
         function showAllZipsUploadedNotification() {
             if (zipSafeToQuitAlertShown) return;
-            
+
             zipSafeToQuitAlertShown = true;
             zipLog('All zip batches uploaded! Processing continues in the background.', 'success');
             $('#blitzcdn-zip-safe-modal').show();
-            
+
             zipMigrationInProgress = false;
             updateZipStartButtonByCount();
             loadZipMigrationStats();
@@ -1029,7 +1036,7 @@ if (typeof jQuery === 'undefined') {
                 zipCurrentBatchConfirmed = true;
                 zipLog('Middleware confirmed processing for batch.', 'info');
             }
-            
+
             // If processing is finished, show modal if not already shown
             if (data.all_zips_uploaded && (data.status === 'completed' || data.status === 'completed_with_errors' || data.safe_to_quit)) {
                 if (!zipSafeToQuitAlertShown) {
@@ -1080,7 +1087,7 @@ if (typeof jQuery === 'undefined') {
                     // If we've finalized, keep the panel visible and show a completed state — do not return
                     $('#blitzcdn-zip-migration-status').show();
                     $('#blitzcdn-zip-reset-btn').show();
-                    $('#blitzcdn-zip-progress-bar').css('width','100%').css('background','linear-gradient(90deg, #28a745, #4ec9b0)');
+                    $('#blitzcdn-zip-progress-bar').css('width', '100%').css('background', 'linear-gradient(90deg, #28a745, #4ec9b0)');
                     $('#blitzcdn-zip-progress-text').html('✅ Completed');
                 }
             }
@@ -1119,35 +1126,49 @@ if (typeof jQuery === 'undefined') {
                     statusText = '✅ All batches uploaded';
                     zipMigrationInProgress = false;
                     // Ensure the UI shows the uploaded/completed state and preserves it
-                    $('#blitzcdn-zip-progress-bar').css('background','linear-gradient(90deg, #28a745, #4ec9b0)');
+                    $('#blitzcdn-zip-progress-bar').css('background', 'linear-gradient(90deg, #28a745, #4ec9b0)');
                     $('#blitzcdn-zip-progress-text').html('✅ All batches uploaded');
                     $('#blitzcdn-zip-cancel-btn').hide();
                     break;
                 case 'completed':
                     statusColor = '#28a745';
                     statusText = '✅ Completed';
-                    stopZipStatusPolling();
-                    zipMigrationInProgress = false;
-                    zipFinalized = true; // freeze the UI on success
-                    updateZipStartButtonByCount();
-                    $('#blitzcdn-zip-cancel-btn').hide();
-                    // Force a stable completed UI state
-                    $('#blitzcdn-zip-progress-bar').css('width','100%').css('background','linear-gradient(90deg, #28a745, #4ec9b0)');
-                    $('#blitzcdn-zip-progress-text').html('✅ Completed');
-                    loadZipMigrationStats();
+                    // Only finalize if all zips have been uploaded (don't mark done if more batches are pending)
+                    if (data.all_zips_uploaded) {
+                        stopZipStatusPolling();
+                        zipMigrationInProgress = false;
+                        zipFinalized = true; // freeze the UI on success only when all zips are done
+                        updateZipStartButtonByCount();
+                        $('#blitzcdn-zip-cancel-btn').hide();
+                        // Force a stable completed UI state
+                        $('#blitzcdn-zip-progress-bar').css('width', '100%').css('background', 'linear-gradient(90deg, #28a745, #4ec9b0)');
+                        $('#blitzcdn-zip-progress-text').html('✅ Completed');
+                        loadZipMigrationStats();
+                    } else {
+                        // Still processing more batches, don't finalize - just update status text
+                        statusColor = '#17a2b8';
+                        statusText = '🔄 Processing on middleware (more batches pending)';
+                    }
                     break;
                 case 'completed_with_errors':
                     statusColor = '#ffc107';
                     statusText = '⚠️ Completed with errors';
-                    stopZipStatusPolling();
-                    zipMigrationInProgress = false;
-                    zipFinalized = true; // freeze the UI on final-with-errors
-                    updateZipStartButtonByCount();
-                    $('#blitzcdn-zip-cancel-btn').hide();
-                    // Force a stable completed-with-errors UI state
-                    $('#blitzcdn-zip-progress-bar').css('width','100%').css('background','linear-gradient(90deg, #ffc107, #ffdf7e)');
-                    $('#blitzcdn-zip-progress-text').html('⚠️ Completed with errors');
-                    loadZipMigrationStats();
+                    // Only finalize if all zips have been uploaded
+                    if (data.all_zips_uploaded) {
+                        stopZipStatusPolling();
+                        zipMigrationInProgress = false;
+                        zipFinalized = true; // freeze the UI on final-with-errors only when all zips are done
+                        updateZipStartButtonByCount();
+                        $('#blitzcdn-zip-cancel-btn').hide();
+                        // Force a stable completed-with-errors UI state
+                        $('#blitzcdn-zip-progress-bar').css('width', '100%').css('background', 'linear-gradient(90deg, #ffc107, #ffdf7e)');
+                        $('#blitzcdn-zip-progress-text').html('⚠️ Completed with errors');
+                        loadZipMigrationStats();
+                    } else {
+                        // Still processing more batches, don't finalize - treat as still processing
+                        statusColor = '#17a2b8';
+                        statusText = '🔄 Processing on middleware (more batches pending)';
+                    }
                     break;
                 case 'cancelled':
                     statusColor = '#6c757d';
@@ -1208,7 +1229,8 @@ if (typeof jQuery === 'undefined') {
                 $('#blitzcdn-zip-progress-bar').css('width', percent + '%');
 
                 // If migration is complete (or the percent reached 100%), show a distinct completed state
-                if ((data && (data.status === 'completed' || data.status === 'completed_with_errors')) || percent === 100) {
+                // But ONLY if all zips have been uploaded (no more batches pending)
+                if (data && data.all_zips_uploaded && (data.status === 'completed' || data.status === 'completed_with_errors') || (percent === 100 && data && data.all_zips_uploaded)) {
                     var completeText = (data && data.status === 'completed_with_errors') ? '⚠️ Completed with errors' : '✅ Completed';
                     $('#blitzcdn-zip-progress-bar').css('background', 'linear-gradient(90deg, #28a745, #4ec9b0)');
                     $('#blitzcdn-zip-progress-text').html(completeText + ' — ' + completed + ' / ' + (totalAssets || '-') + ' processed');
