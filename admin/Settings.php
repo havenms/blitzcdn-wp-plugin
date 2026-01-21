@@ -451,7 +451,7 @@ class Settings {
                         </div>
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; font-weight:500;">
                             <div id="blitzcdn-zip-progress-text">-</div>
-                            <div style="font-size:12px; color:#666;">Total assets: <span id="blitzcdn-zip-total-assets">-</span></div>
+                            <div style="font-size:12px; color:#666;">Total assets: <span id="blitzcdn-zip-total-assets-inline">-</span></div>
                         </div>
                     </div>
 

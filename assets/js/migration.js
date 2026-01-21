@@ -656,8 +656,12 @@ if (typeof jQuery === 'undefined') {
         var zipSafeToQuitAlertShown = false;
         var zipMigrationInProgress = false;
         var zipCurrentBatchConfirmed = false; // Track if current batch was confirmed by middleware
-        var zipTotalAssets = null; // Total assets (files) to process for current migration
+        var zipTotalAssets = null; // Locked total assets (files) for this UI session
         var zipUploadedFiles = 0; // Accumulate files added to middleware across batches (client-side)
+        var zipUiUploadedMax = 0; // Monotonic UI guard
+        var zipUiProcessedMax = 0; // Monotonic UI guard
+        var zipUiFailedMax = 0; // Monotonic UI guard
+        var zipHasActiveStatus = false; // True once a migration is active (uploading or processing)
         var zipFinalized = false; // Guard: once true, keep final UI state and ignore transient polls
 
         // Load initial stats for zip migration
@@ -668,7 +672,17 @@ if (typeof jQuery === 'undefined') {
                 if (response.success) {
                     $('#blitzcdn-zip-total-attachments').text(response.data.total_attachments);
                     $('#blitzcdn-zip-total-assets').text(response.data.total_assets);
-                    zipTotalAssets = parseInt(response.data.total_assets, 10) || null;
+                    $('#blitzcdn-zip-total-assets-inline').text(response.data.total_assets);
+
+                    // IMPORTANT: total assets is used as a denominator for progress.
+                    // Do not overwrite it during an active migration, otherwise the UI will fluctuate.
+                    var statsTotal = parseInt(response.data.total_assets, 10);
+                    if (!zipHasActiveStatus && !zipFinalized) {
+                        zipTotalAssets = isNaN(statsTotal) ? null : statsTotal;
+                    } else if (!zipTotalAssets || zipTotalAssets <= 0) {
+                        // If we haven't captured a stable total yet, take the first valid value we see.
+                        zipTotalAssets = isNaN(statsTotal) ? zipTotalAssets : statsTotal;
+                    }
 
                     // If we haven't finalized the migration UI, reset stat cards to the initial state.
                     // If finalized, preserve the final values so subsequent fetches don't clear the completed UI.
@@ -723,8 +737,13 @@ if (typeof jQuery === 'undefined') {
             $('#blitzcdn-zip-migration-log').show().empty();
             zipSafeToQuitAlertShown = false;
             zipMigrationInProgress = true;
+            zipHasActiveStatus = true;
             zipCurrentBatchConfirmed = false;
             zipUploadedFiles = 0; // reset accumulator when starting
+            zipUiUploadedMax = 0;
+            zipUiProcessedMax = 0;
+            zipUiFailedMax = 0;
+            // Keep whatever we loaded pre-start; lock once we have a valid value.
             zipFinalized = false; // allow UI updates while a migration runs
             zipLog('Starting migration...', 'info');
 
@@ -794,31 +813,18 @@ if (typeof jQuery === 'undefined') {
             // Accumulate uploaded files count if middleware returned files_added for this zip
             if (data.files_added !== undefined) {
                 zipUploadedFiles += parseInt(data.files_added, 10) || 0;
+                zipUiUploadedMax = Math.max(zipUiUploadedMax, zipUploadedFiles);
             }
 
             if (data.all_zips_uploaded) {
                 zipLog('All attachments have been uploaded to middleware!', 'success');
                 zipLog('Processing will continue in the background.', 'info');
                 zipMigrationInProgress = false;
+                zipHasActiveStatus = true;
                 updateZipStartButtonByCount();
 
-                // Mark final state so subsequent polls don't clear the UI
-                zipFinalized = true;
-
-                // Use the total assets count (the denominator in "x / total processed") as the Uploaded value
-                // This represents the total files queued for processing once all zips are uploaded
-                $('#blitzcdn-zip-uploaded-count').text(zipTotalAssets && zipTotalAssets > 0 ? zipTotalAssets : '-');
-
-                // If we have a total assets number, update progress immediately
-                if (zipTotalAssets && zipTotalAssets > 0) {
-                    var completed = parseInt($('#blitzcdn-zip-processed-count').text(), 10) || 0;
-                    var failed = parseInt($('#blitzcdn-zip-failed-count').text(), 10) || 0;
-                    var percent = Math.round(((completed + failed) / zipTotalAssets) * 100);
-                    percent = Math.max(0, Math.min(100, percent));
-                    $('#blitzcdn-zip-progress-bar').css('width', percent + '%');
-                    $('#blitzcdn-zip-progress-text').text(percent + '% — ' + (completed + failed) + ' / ' + zipTotalAssets + ' processed');
-                }
-
+                // Do not finalize the UI here; processing still continues and status polling should keep updating.
+                // Just show the safe-to-quit modal and keep the progress tied to processed/failed.
                 loadZipMigrationStats();
                 showAllZipsUploadedNotification();
                 return;
@@ -979,7 +985,8 @@ if (typeof jQuery === 'undefined') {
                 if (response.success) {
                     updateZipStatusUI(response.data);
 
-                    // Reload stats to update unmigrated counts
+                    // Reload stats to update unmigrated counts.
+                    // Avoid overwriting the locked denominator during an active run.
                     loadZipMigrationStats();
 
                     // Decide whether to poll: keep polling when there is an active migration
@@ -988,23 +995,23 @@ if (typeof jQuery === 'undefined') {
                         response.data.migration_id || response.data.attachments_zipped || response.data.total_attachments_to_migrate || response.data.total_files_uploaded
                     );
                     var allZipsUploaded = response.data && response.data.all_zips_uploaded;
-
+ 
                     var shouldPoll = false;
-                    // Keep polling if status is 'completed' but not all zips are uploaded yet
-                    if (statusVal && statusVal !== 'idle' && statusVal !== 'failed') {
-                        // For 'completed' and 'completed_with_errors', only stop polling if ALL zips are done
-                        if ((statusVal === 'completed' || statusVal === 'completed_with_errors') && !allZipsUploaded) {
-                            shouldPoll = true;
-                        } else if (statusVal !== 'completed' && statusVal !== 'completed_with_errors') {
+                    // Keep polling while anything is in-flight.
+                    // Do not stop polling on a transient 'completed' unless all_zips_uploaded is true.
+                    if (statusVal && statusVal !== 'idle' && statusVal !== 'failed' && statusVal !== 'cancelled') {
+                        if ((statusVal === 'completed' || statusVal === 'completed_with_errors') && allZipsUploaded) {
+                            shouldPoll = false;
+                        } else {
                             shouldPoll = true;
                         }
                     }
-
+ 
                     // Also poll if we have migration metadata even if status is 'idle' (prevents flicker)
                     if (!shouldPoll && hasMigrationFields) {
                         shouldPoll = true;
                     }
-
+ 
                     if (shouldPoll) {
                         startZipStatusPolling();
                     } else {
@@ -1076,20 +1083,25 @@ if (typeof jQuery === 'undefined') {
                 (data.total_files_uploaded && data.total_files_uploaded > 0)
             );
 
+            // If status returns to idle mid-run (common when another zip batch overwrites status),
+            // keep the panel visible once we've seen an active run.
+            if ((data && data.status && data.status !== 'idle') || hasMigrationId || hasAnyTotals) {
+                zipHasActiveStatus = true;
+            }
+
             var isTrulyEmpty = !data || (data.status === 'idle' && !hasMigrationId && !hasAnyTotals);
             if (isTrulyEmpty) {
-                if (!zipFinalized) {
+                if (!zipFinalized && !zipHasActiveStatus) {
                     // No active migration data to display — hide the panel
                     $('#blitzcdn-zip-migration-status').hide();
                     $('#blitzcdn-zip-reset-btn').hide();
                     return;
-                } else {
-                    // If we've finalized, keep the panel visible and show a completed state — do not return
-                    $('#blitzcdn-zip-migration-status').show();
-                    $('#blitzcdn-zip-reset-btn').show();
-                    $('#blitzcdn-zip-progress-bar').css('width', '100%').css('background', 'linear-gradient(90deg, #28a745, #4ec9b0)');
-                    $('#blitzcdn-zip-progress-text').html('✅ Completed');
                 }
+
+                // Keep panel visible during an active run, but do not stamp "Completed".
+                $('#blitzcdn-zip-migration-status').show();
+                $('#blitzcdn-zip-reset-btn').show();
+                $('#blitzcdn-zip-progress-text').text('Working…');
             }
 
             // Show status panel if we have any migration info (even if status is briefly 'idle')
@@ -1125,26 +1137,29 @@ if (typeof jQuery === 'undefined') {
                     statusColor = '#28a745';
                     statusText = '✅ All batches uploaded';
                     zipMigrationInProgress = false;
-                    // Ensure the UI shows the uploaded/completed state and preserves it
-                    $('#blitzcdn-zip-progress-bar').css('background', 'linear-gradient(90deg, #28a745, #4ec9b0)');
-                    $('#blitzcdn-zip-progress-text').html('✅ All batches uploaded');
+                    zipHasActiveStatus = true;
+                    // Upload phase is complete, but processing continues on the middleware.
+                    // Do NOT present this as "Completed"; keep progress tied to processed/failed.
+                    $('#blitzcdn-zip-progress-bar').css('background', 'linear-gradient(90deg, #2271b1, #4ec9b0)');
+                    $('#blitzcdn-zip-progress-text').text('All batches uploaded — processing continues on middleware');
                     $('#blitzcdn-zip-cancel-btn').hide();
                     break;
                 case 'completed':
                     statusColor = '#28a745';
                     statusText = '✅ Completed';
                     // Only finalize if all zips have been uploaded (don't mark done if more batches are pending)
-                    if (data.all_zips_uploaded) {
-                        stopZipStatusPolling();
-                        zipMigrationInProgress = false;
-                        zipFinalized = true; // freeze the UI on success only when all zips are done
-                        updateZipStartButtonByCount();
-                        $('#blitzcdn-zip-cancel-btn').hide();
-                        // Force a stable completed UI state
-                        $('#blitzcdn-zip-progress-bar').css('width', '100%').css('background', 'linear-gradient(90deg, #28a745, #4ec9b0)');
-                        $('#blitzcdn-zip-progress-text').html('✅ Completed');
-                        loadZipMigrationStats();
-                    } else {
+                        if (data.all_zips_uploaded) {
+                            stopZipStatusPolling();
+                            zipMigrationInProgress = false;
+                            zipHasActiveStatus = true;
+                            zipFinalized = true; // freeze the UI on success only when all zips are done
+                            updateZipStartButtonByCount();
+                            $('#blitzcdn-zip-cancel-btn').hide();
+                            // Force a stable completed UI state
+                            $('#blitzcdn-zip-progress-bar').css('width', '100%').css('background', 'linear-gradient(90deg, #28a745, #4ec9b0)');
+                            $('#blitzcdn-zip-progress-text').html('✅ Completed');
+                            loadZipMigrationStats();
+                        } else {
                         // Still processing more batches, don't finalize - just update status text
                         statusColor = '#17a2b8';
                         statusText = '🔄 Processing on middleware (more batches pending)';
@@ -1157,6 +1172,7 @@ if (typeof jQuery === 'undefined') {
                     if (data.all_zips_uploaded) {
                         stopZipStatusPolling();
                         zipMigrationInProgress = false;
+                        zipHasActiveStatus = true;
                         zipFinalized = true; // freeze the UI on final-with-errors only when all zips are done
                         updateZipStartButtonByCount();
                         $('#blitzcdn-zip-cancel-btn').hide();
@@ -1175,6 +1191,7 @@ if (typeof jQuery === 'undefined') {
                     statusText = '🛑 Cancelled';
                     stopZipStatusPolling();
                     zipMigrationInProgress = false;
+                    zipHasActiveStatus = false;
                     updateZipStartButtonByCount();
                     $('#blitzcdn-zip-cancel-btn').hide();
                     loadZipMigrationStats();
@@ -1186,6 +1203,7 @@ if (typeof jQuery === 'undefined') {
                     statusText = '❌ Error: ' + (data.error || data.message || data.status);
                     stopZipStatusPolling();
                     zipMigrationInProgress = false;
+                    zipHasActiveStatus = false;
                     updateZipStartButtonByCount();
                     $('#blitzcdn-zip-cancel-btn').hide();
                     break;
@@ -1198,46 +1216,72 @@ if (typeof jQuery === 'undefined') {
             $('#blitzcdn-zip-migration-id').text(data.migration_id || '-');
 
             // Compute totals for the centralized progress
-            var totalAssets = zipTotalAssets || (parseInt($('#blitzcdn-zip-total-assets').text(), 10) || 0);
-            var uploaded = data.total_files_uploaded !== undefined ? parseInt(data.total_files_uploaded, 10) : (data.files_added !== undefined ? parseInt(data.files_added, 10) : 0);
-            var processed = data.processed !== undefined ? parseInt(data.processed, 10) : 0;
-            var failed = data.failed !== undefined ? parseInt(data.failed, 10) : 0;
-
-            // Always use totalAssets for the Uploaded card (this is the denominator used in the progress bar)
-            if (totalAssets && totalAssets > 0) {
-                uploaded = totalAssets;
+            var totalAssets = zipTotalAssets || 0;
+            var totalAssetsFromDom = parseInt($('#blitzcdn-zip-total-assets').text(), 10);
+            if ((!totalAssets || totalAssets <= 0) && !isNaN(totalAssetsFromDom)) {
+                totalAssets = totalAssetsFromDom;
             }
 
-            // Update small stat cards
-            $('#blitzcdn-zip-uploaded-count').text(typeof uploaded === 'number' && uploaded >= 0 ? uploaded : '-');
-            $('#blitzcdn-zip-processed-count').text(typeof processed === 'number' && processed >= 0 ? processed : '-');
-            $('#blitzcdn-zip-failed-count').text(typeof failed === 'number' && failed >= 0 ? failed : '-');
+            // Keep the denominator stable: once we have a valid total, lock it.
+            if ((!zipTotalAssets || zipTotalAssets <= 0) && totalAssets && totalAssets > 0) {
+                zipTotalAssets = totalAssets;
+            }
+
+            // Uploaded: show client-side accumulated files_added (queued to middleware) while uploading.
+            // If backend provides a monotonic total_files_uploaded, prefer it.
+            var uploadedRaw = 0;
+            if (data.total_files_uploaded !== undefined) {
+                uploadedRaw = parseInt(data.total_files_uploaded, 10) || 0;
+            } else {
+                uploadedRaw = zipUploadedFiles || 0;
+            }
+
+            // Processed/failed come from webhook callbacks; they can fluctuate if backend status is overwritten.
+            // Clamp them to be monotonic for UI stability.
+            var processedRaw = data.processed !== undefined ? (parseInt(data.processed, 10) || 0) : 0;
+            var failedRaw = data.failed !== undefined ? (parseInt(data.failed, 10) || 0) : 0;
+
+            zipUiUploadedMax = Math.max(zipUiUploadedMax, uploadedRaw);
+            zipUiProcessedMax = Math.max(zipUiProcessedMax, processedRaw);
+            zipUiFailedMax = Math.max(zipUiFailedMax, failedRaw);
+
+            // Update stat cards (never decrease)
+            $('#blitzcdn-zip-uploaded-count').text(zipUiUploadedMax >= 0 ? zipUiUploadedMax : '-');
+            $('#blitzcdn-zip-processed-count').text(zipUiProcessedMax >= 0 ? zipUiProcessedMax : '-');
+            $('#blitzcdn-zip-failed-count').text(zipUiFailedMax >= 0 ? zipUiFailedMax : '-');
 
             // Progress is based on processed+failed out of total assets (represents completed work)
             // If we've finalized the migration UI, don't overwrite the final display
             if (!zipFinalized) {
-                var completed = processed + failed;
+                var completed = zipUiProcessedMax + zipUiFailedMax;
                 var percent = 0;
-                if (totalAssets && totalAssets > 0) {
-                    percent = Math.round((completed / totalAssets) * 100);
-                } else if (uploaded && data.total_files_uploaded !== undefined) {
-                    // fallback: show uploaded proportion if totalAssets unknown
-                    percent = Math.round((uploaded / Math.max(1, uploaded)) * 100);
+
+                if (zipTotalAssets && zipTotalAssets > 0) {
+                    percent = Math.round((completed / zipTotalAssets) * 100);
+                } else {
+                    // No denominator yet; show 0% instead of jumping to 100%.
+                    percent = 0;
                 }
 
                 percent = Math.max(0, Math.min(100, percent));
                 $('#blitzcdn-zip-progress-bar').css('width', percent + '%');
 
-                // If migration is complete (or the percent reached 100%), show a distinct completed state
-                // But ONLY if all zips have been uploaded (no more batches pending)
-                if (data && data.all_zips_uploaded && (data.status === 'completed' || data.status === 'completed_with_errors') || (percent === 100 && data && data.all_zips_uploaded)) {
-                    var completeText = (data && data.status === 'completed_with_errors') ? '⚠️ Completed with errors' : '✅ Completed';
+                // Completed state should only display when all zips are uploaded AND middleware finished processing
+                var isCompleted = data && data.all_zips_uploaded && (data.status === 'completed' || data.status === 'completed_with_errors');
+                if (isCompleted) {
+                    var completeText = (data.status === 'completed_with_errors') ? '⚠️ Completed with errors' : '✅ Completed';
                     $('#blitzcdn-zip-progress-bar').css('background', 'linear-gradient(90deg, #28a745, #4ec9b0)');
-                    $('#blitzcdn-zip-progress-text').html(completeText + ' — ' + completed + ' / ' + (totalAssets || '-') + ' processed');
+                    $('#blitzcdn-zip-progress-text').html(completeText + ' — ' + completed + ' / ' + (zipTotalAssets || '-') + ' processed');
                 } else {
-                    // Default non-complete display
                     $('#blitzcdn-zip-progress-bar').css('background', 'linear-gradient(90deg, #2271b1, #4ec9b0)');
-                    $('#blitzcdn-zip-progress-text').text(percent + '% — ' + completed + ' / ' + (totalAssets || '-') + ' processed');
+
+                    // While we're still uploading zip batches, reflect that in the UI (no premature "Completed").
+                    var uploadPhase = (!data.all_zips_uploaded && (data.current_zip_batch || data.total_zip_batches));
+                    if (uploadPhase && data.total_zip_batches) {
+                        $('#blitzcdn-zip-progress-text').text('Uploading batches — ' + (data.current_zip_batch || 0) + ' / ' + data.total_zip_batches + ' uploaded');
+                    } else {
+                        $('#blitzcdn-zip-progress-text').text(percent + '% — ' + completed + ' / ' + (zipTotalAssets || '-') + ' processed');
+                    }
                 }
             } // if not zipFinalized (skip updates when finalized)
 
