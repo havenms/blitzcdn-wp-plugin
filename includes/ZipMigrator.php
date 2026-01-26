@@ -9,7 +9,8 @@ namespace BlitzCDN;
  * uploads to a middleware service for parallel processing, and handles
  * webhook callbacks with results.
  */
-class ZipMigrator {
+class ZipMigrator
+{
 
     /**
      * Option key for migration status tracking.
@@ -29,14 +30,16 @@ class ZipMigrator {
     /**
      * Constructor - register hooks.
      */
-    public function __construct() {
+    public function __construct()
+    {
         add_action('rest_api_init', [$this, 'register_rest_routes']);
     }
 
     /**
      * Register REST API routes for webhook callbacks.
      */
-    public function register_rest_routes() {
+    public function register_rest_routes()
+    {
         register_rest_route(self::REST_NAMESPACE, '/migration-webhook', [
             'methods' => 'POST',
             'callback' => [$this, 'handle_webhook_callback'],
@@ -46,7 +49,7 @@ class ZipMigrator {
         register_rest_route(self::REST_NAMESPACE, '/migration-status', [
             'methods' => 'GET',
             'callback' => [$this, 'get_migration_status_rest'],
-            'permission_callback' => function() {
+            'permission_callback' => function () {
                 return current_user_can('manage_options');
             },
         ]);
@@ -54,7 +57,7 @@ class ZipMigrator {
         register_rest_route(self::REST_NAMESPACE, '/cancel-migration', [
             'methods' => 'POST',
             'callback' => [$this, 'handle_cancel_migration_rest'],
-            'permission_callback' => function() {
+            'permission_callback' => function () {
                 return current_user_can('manage_options');
             },
         ]);
@@ -66,7 +69,8 @@ class ZipMigrator {
      * @param \WP_REST_Request $request The REST request.
      * @return bool Whether the token is valid.
      */
-    public function verify_webhook_token($request) {
+    public function verify_webhook_token($request)
+    {
         $settings = get_option('blitzcdn_settings', []);
         $webhook_secret = $settings['webhook_secret'] ?? '';
 
@@ -104,7 +108,8 @@ class ZipMigrator {
      * @param int $limit Maximum number of IDs to return (0 for all).
      * @return array Array of attachment IDs.
      */
-    public function get_unmigrated_attachments($limit = 0) {
+    public function get_unmigrated_attachments($limit = 0)
+    {
         $args = [
             'post_type' => 'attachment',
             'post_status' => 'inherit',
@@ -129,19 +134,20 @@ class ZipMigrator {
      * @param int $limit Maximum number of IDs to return (0 for all).
      * @return array Array of attachment IDs.
      */
-    public function get_unzipped_attachments($limit = 0) {
+    public function get_unzipped_attachments($limit = 0)
+    {
         $current_status = $this->get_migration_status();
         $zipped_ids = $current_status['zipped_attachment_ids'] ?? [];
-        
+
         // Get unmigrated attachments
         $unmigrated = $this->get_unmigrated_attachments($limit);
-        
+
         // Exclude those already zipped in this migration session
         if (!empty($zipped_ids)) {
             $unmigrated = array_diff($unmigrated, $zipped_ids);
             $unmigrated = array_values($unmigrated); // Re-index
         }
-        
+
         return $unmigrated;
     }
 
@@ -150,12 +156,13 @@ class ZipMigrator {
      * 
      * @param array $attachment_ids Array of attachment IDs to mark.
      */
-    private function mark_attachments_zipped($attachment_ids) {
+    private function mark_attachments_zipped($attachment_ids)
+    {
         $current_status = $this->get_migration_status();
         $zipped_ids = $current_status['zipped_attachment_ids'] ?? [];
-        
+
         $zipped_ids = array_unique(array_merge($zipped_ids, $attachment_ids));
-        
+
         $this->update_migration_status([
             'zipped_attachment_ids' => $zipped_ids,
         ]);
@@ -167,7 +174,8 @@ class ZipMigrator {
      * @param array $attachment_ids Array of attachment IDs.
      * @return array Metadata structure for the zip file.
      */
-    public function build_metadata($attachment_ids) {
+    public function build_metadata($attachment_ids)
+    {
         $settings = get_option('blitzcdn_settings', []);
         $upload_dir = wp_upload_dir();
         $base_url = $upload_dir['baseurl'];
@@ -222,7 +230,8 @@ class ZipMigrator {
      * @param array $attachment_ids Array of attachment IDs to include.
      * @return array|WP_Error Array with 'path' and 'metadata' on success, WP_Error on failure.
      */
-    public function create_migration_zip($attachment_ids) {
+    public function create_migration_zip($attachment_ids)
+    {
         if (empty($attachment_ids)) {
             return new \WP_Error('no_attachments', 'No attachments provided for migration.');
         }
@@ -236,7 +245,7 @@ class ZipMigrator {
         $current_limit = ini_get('memory_limit');
         $limit_bytes = $this->parse_memory_limit($current_limit);
         $needed_bytes = 512 * 1024 * 1024; // 512MB
-        
+
         if ($limit_bytes < $needed_bytes && $limit_bytes !== -1) {
             @ini_set('memory_limit', '512M');
         }
@@ -257,7 +266,7 @@ class ZipMigrator {
         // Create zip archive
         $zip = new \ZipArchive();
         $result = $zip->open($zip_path, \ZipArchive::CREATE | \ZipArchive::OVERWRITE);
-        
+
         if ($result !== true) {
             return new \WP_Error('zip_create_failed', 'Failed to create zip archive. Error code: ' . $result);
         }
@@ -301,8 +310,9 @@ class ZipMigrator {
 
         $zip->close();
 
-        // Update migration status
+        // Update migration status - preserve cumulative processed/failed counts from previous batches
         $total_batches = (int) ceil((count($metadata['attachments']) ?: count($attachment_ids)) / self::MIDDLEWARE_BATCH_SIZE);
+        $current_status = $this->get_migration_status();
 
         $this->update_migration_status([
             'migration_id' => $migration_id,
@@ -314,8 +324,9 @@ class ZipMigrator {
             'created_at' => current_time('timestamp'),
             'total_batches' => $total_batches,
             'current_batch' => 0,
-            'processed' => 0,
-            'failed' => 0,
+            // Preserve cumulative counters - don't reset to 0!
+            'processed' => intval($current_status['processed'] ?? 0),
+            'failed' => intval($current_status['failed'] ?? 0),
             'safe_to_quit' => false,
         ]);
 
@@ -337,7 +348,8 @@ class ZipMigrator {
      * @param int $max_retries Maximum number of retry attempts.
      * @return array|WP_Error Response data on success, WP_Error on failure.
      */
-    public function upload_zip_to_middleware($zip_path, $migration_id, $max_retries = 3) {
+    public function upload_zip_to_middleware($zip_path, $migration_id, $max_retries = 3)
+    {
         $settings = get_option('blitzcdn_settings', []);
         $middleware_url = $settings['middleware_url'] ?? '';
         $middleware_api_key = $settings['middleware_api_key'] ?? '';
@@ -351,36 +363,36 @@ class ZipMigrator {
         }
 
         $last_error = null;
-        
+
         // Retry loop with exponential backoff
         for ($attempt = 1; $attempt <= $max_retries; $attempt++) {
             error_log("BlitzCDN: Upload attempt {$attempt}/{$max_retries} for migration {$migration_id}");
-            
+
             $result = $this->attempt_upload($zip_path, $migration_id, $middleware_url, $middleware_api_key);
-            
+
             if (!is_wp_error($result)) {
                 if ($attempt > 1) {
                     error_log("BlitzCDN: Upload succeeded on attempt {$attempt}");
                 }
                 return $result;
             }
-            
+
             $last_error = $result;
             $error_code = $result->get_error_code();
             $error_message = $result->get_error_message();
-            
+
             // Don't retry on certain errors
             if (in_array($error_code, ['middleware_not_configured', 'zip_not_found'])) {
                 error_log("BlitzCDN: Non-retryable error: {$error_message}");
                 return $result;
             }
-            
+
             // For 413 (payload too large), don't retry - the zip is too big
             if (strpos($error_message, 'HTTP 413') !== false) {
                 error_log("BlitzCDN: Zip too large (HTTP 413), cannot retry");
                 return $result;
             }
-            
+
             // If this isn't the last attempt, wait before retrying
             if ($attempt < $max_retries) {
                 $wait_seconds = min(pow(2, $attempt - 1), 30); // Exponential backoff, max 30s
@@ -388,7 +400,7 @@ class ZipMigrator {
                 sleep($wait_seconds);
             }
         }
-        
+
         error_log("BlitzCDN: Upload failed after {$max_retries} attempts");
         return $last_error;
     }
@@ -402,7 +414,8 @@ class ZipMigrator {
      * @param string $middleware_api_key Middleware API key.
      * @return array|WP_Error Response data on success, WP_Error on failure.
      */
-    private function attempt_upload($zip_path, $migration_id, $middleware_url, $middleware_api_key) {
+    private function attempt_upload($zip_path, $migration_id, $middleware_url, $middleware_api_key)
+    {
 
         // Update status
         $this->update_migration_status([
@@ -412,10 +425,10 @@ class ZipMigrator {
 
         // Prepare the request
         $endpoint = rtrim($middleware_url, '/') . '/api/migrate';
-        
+
         // Use cURL for multipart file upload
         $ch = curl_init();
-        
+
         $post_data = [
             'file' => new \CURLFile($zip_path, 'application/zip', basename($zip_path)),
             'migration_id' => $migration_id,
@@ -461,7 +474,7 @@ class ZipMigrator {
         }
 
         $data = json_decode($response, true);
-        
+
         // Update status
         $this->update_migration_status([
             'status' => 'awaiting_confirmation',
@@ -479,7 +492,8 @@ class ZipMigrator {
      * @param \WP_REST_Request $request The REST request.
      * @return \WP_REST_Response The REST response.
      */
-    public function handle_webhook_callback($request) {
+    public function handle_webhook_callback($request)
+    {
         $payload = $request->get_json_params();
 
         error_log('BlitzCDN: Received webhook callback: ' . wp_json_encode($payload));
@@ -514,7 +528,7 @@ class ZipMigrator {
                 'total_batches' => isset($payload['total_batches']) ? intval($payload['total_batches']) : ($current_status['total_batches'] ?? 0),
                 'last_message' => $payload['message'] ?? '',
                 // Preserve multi-zip batch info so JS knows to continue
-                'has_more_batches' => $current_status['all_zips_uploaded'] === false && 
+                'has_more_batches' => $current_status['all_zips_uploaded'] === false &&
                     ($current_status['attachments_zipped'] ?? 0) < ($current_status['total_attachments_to_migrate'] ?? 0),
             ]);
 
@@ -542,7 +556,7 @@ class ZipMigrator {
 
             // Update postmeta for original file
             update_post_meta($attachment_id, '_blitzcdn_file_id', sanitize_text_field($result['file_id']));
-            
+
             if (!empty($result['cdn_url'])) {
                 update_post_meta($attachment_id, '_blitzcdn_cdn_url', esc_url_raw($result['cdn_url']));
             }
@@ -641,7 +655,8 @@ class ZipMigrator {
      * @param \WP_REST_Request $request The REST request.
      * @return \WP_REST_Response The REST response.
      */
-    public function get_migration_status_rest($request) {
+    public function get_migration_status_rest($request)
+    {
         $status = $this->get_migration_status();
         return new \WP_REST_Response($status, 200);
     }
@@ -651,7 +666,8 @@ class ZipMigrator {
      * 
      * @param array $data Data to merge into status.
      */
-    public function update_migration_status($data) {
+    public function update_migration_status($data)
+    {
         $current = get_option(self::MIGRATION_STATUS_OPTION, []);
         $updated = array_merge($current, $data);
         update_option(self::MIGRATION_STATUS_OPTION, $updated);
@@ -662,7 +678,8 @@ class ZipMigrator {
      * 
      * @return array Migration status data.
      */
-    public function get_migration_status() {
+    public function get_migration_status()
+    {
         return get_option(self::MIGRATION_STATUS_OPTION, [
             'status' => 'idle',
             'migration_id' => '',
@@ -674,6 +691,7 @@ class ZipMigrator {
             'safe_to_quit' => false,
             // Multi-zip batch tracking
             'total_attachments_to_migrate' => 0,
+            'total_assets_to_migrate' => 0,
             'attachments_zipped' => 0,
             'current_zip_batch' => 0,
             'total_zip_batches' => 0,
@@ -687,7 +705,8 @@ class ZipMigrator {
     /**
      * Reset migration status.
      */
-    public function reset_migration_status() {
+    public function reset_migration_status()
+    {
         delete_option(self::MIGRATION_STATUS_OPTION);
     }
 
@@ -697,15 +716,16 @@ class ZipMigrator {
      * @param string $limit Memory limit string (e.g., '256M', '1G').
      * @return int Memory limit in bytes, or -1 for unlimited.
      */
-    private function parse_memory_limit($limit) {
+    private function parse_memory_limit($limit)
+    {
         if ($limit === '-1') {
             return -1;
         }
-        
+
         $limit = trim($limit);
         $last = strtolower($limit[strlen($limit) - 1]);
         $limit = (int) $limit;
-        
+
         switch ($last) {
             case 'g':
                 $limit *= 1024;
@@ -714,7 +734,7 @@ class ZipMigrator {
             case 'k':
                 $limit *= 1024;
         }
-        
+
         return $limit;
     }
 
@@ -726,32 +746,33 @@ class ZipMigrator {
      * @param int $max_attachments Maximum number of attachments (respects user setting).
      * @return array Capped array of attachment IDs.
      */
-    private function cap_attachments_by_file_count($attachment_ids, $max_attachments) {
+    private function cap_attachments_by_file_count($attachment_ids, $max_attachments)
+    {
         $file_cap = 10000; // Hard cap on total files (originals + sizes)
         $result_ids = [];
         $total_files = 0;
-        
+
         foreach ($attachment_ids as $attachment_id) {
             // Stop if we've hit the attachment limit
             if (count($result_ids) >= $max_attachments) {
                 break;
             }
-            
+
             // Count files for this attachment: 1 original + number of sizes
             $wp_metadata = wp_get_attachment_metadata($attachment_id);
             $size_count = !empty($wp_metadata['sizes']) && is_array($wp_metadata['sizes']) ? count($wp_metadata['sizes']) : 0;
             $attachment_file_count = 1 + $size_count; // original + sizes
-            
+
             // Check if adding this attachment would exceed the file cap
             if ($total_files + $attachment_file_count > $file_cap) {
                 error_log("BlitzCDN: File cap reached. Stopping at {$total_files} files with " . count($result_ids) . " attachments.");
                 break;
             }
-            
+
             $result_ids[] = $attachment_id;
             $total_files += $attachment_file_count;
         }
-        
+
         return $result_ids;
     }
 
@@ -764,19 +785,20 @@ class ZipMigrator {
      * @param int $limit_attachments Maximum number of attachments to migrate (0 for all). Used for testing.
      * @return array|WP_Error Result data or error.
      */
-    public function start_or_continue_migration($is_continuation = false, $limit_attachments = 0) {
+    public function start_or_continue_migration($is_continuation = false, $limit_attachments = 0)
+    {
         $settings = get_option('blitzcdn_settings', []);
         $zip_batch_size = isset($settings['zip_batch_size']) ? intval($settings['zip_batch_size']) : 100;
-        
+
         // Ensure batch size is within reasonable bounds
         $zip_batch_size = max(1, min(10000, $zip_batch_size));
 
         // For continuation, use get_unzipped_attachments to exclude those already in a zip
         // For fresh start, use get_unmigrated_attachments (which is the same if we reset status)
-        $attachments_to_process = $is_continuation 
+        $attachments_to_process = $is_continuation
             ? $this->get_unzipped_attachments($limit_attachments)
             : $this->get_unmigrated_attachments($limit_attachments);
-        
+
         $total_to_process = count($attachments_to_process);
 
         if (empty($attachments_to_process)) {
@@ -798,23 +820,27 @@ class ZipMigrator {
         $current_status = $this->get_migration_status();
         $current_zip_batch = $is_continuation ? (($current_status['current_zip_batch'] ?? 0) + 1) : 1;
         $attachments_zipped_so_far = $current_status['attachments_zipped'] ?? 0;
-        
+
         // For fresh start, get total unmigrated for accurate tracking
-        $total_unmigrated = $is_continuation 
+        $total_unmigrated = $is_continuation
             ? ($current_status['total_attachments_to_migrate'] ?? $total_to_process + $attachments_zipped_so_far)
             : $total_to_process;
 
         // Calculate total zip batches needed (estimate based on zip_batch_size)
         // This is an estimate since actual batch may be smaller due to file cap
         $total_zip_batches = (int) ceil($total_to_process / $zip_batch_size) + ($current_zip_batch - 1);
+
+        // For fresh start, lock total_assets_to_migrate and initialize counters
+        $total_assets_to_migrate = $current_status['total_assets_to_migrate'] ?? 0;
         if (!$is_continuation) {
-            // First batch - set initial tracking values
+            // First batch - calculate and lock total assets for stable progress denominator
+            $total_assets_to_migrate = Core::count_total_assets($attachments_to_process);
             $attachments_zipped_so_far = 0;
         }
 
         // Calculate how many attachments to include in THIS zip (respecting 10,000 file cap)
         $capped_ids = $this->cap_attachments_by_file_count($attachments_to_process, $zip_batch_size);
-        
+
         if (empty($capped_ids)) {
             return new \WP_Error('no_attachments', 'No valid attachments to migrate after file cap check.');
         }
@@ -830,16 +856,22 @@ class ZipMigrator {
         $this->mark_attachments_zipped($capped_ids);
 
         // Update multi-zip tracking BEFORE upload
-        $attachments_in_this_zip = isset($zip_result['metadata']['attachments']) 
-            ? count($zip_result['metadata']['attachments']) 
+        $attachments_in_this_zip = isset($zip_result['metadata']['attachments'])
+            ? count($zip_result['metadata']['attachments'])
             : count($capped_ids);
+
+        // Track cumulative files uploaded (add this batch's files to running total)
+        $current_files_uploaded = intval($current_status['total_files_uploaded'] ?? 0);
+        $files_in_this_batch = $zip_result['files_added'] ?? 0;
 
         $this->update_migration_status([
             'total_attachments_to_migrate' => $total_unmigrated,
+            'total_assets_to_migrate' => $total_assets_to_migrate,
             'attachments_zipped' => $attachments_zipped_so_far + $attachments_in_this_zip,
             'current_zip_batch' => $current_zip_batch,
             'total_zip_batches' => max($total_zip_batches, $current_zip_batch),
             'all_zips_uploaded' => false,
+            'total_files_uploaded' => $current_files_uploaded + $files_in_this_batch,
         ]);
 
         // Upload to middleware
@@ -849,8 +881,8 @@ class ZipMigrator {
             return $upload_result;
         }
 
-        $total_batches = isset($zip_result['metadata']['attachments']) 
-            ? (int) ceil(count($zip_result['metadata']['attachments']) / self::MIDDLEWARE_BATCH_SIZE) 
+        $total_batches = isset($zip_result['metadata']['attachments'])
+            ? (int) ceil(count($zip_result['metadata']['attachments']) / self::MIDDLEWARE_BATCH_SIZE)
             : (int) ceil(count($capped_ids) / self::MIDDLEWARE_BATCH_SIZE);
 
         // Check if there are more attachments to process after this batch
@@ -869,11 +901,13 @@ class ZipMigrator {
             'current_zip_batch' => $current_zip_batch,
             'total_zip_batches' => max($total_zip_batches, $current_zip_batch),
             'total_attachments_to_migrate' => $total_unmigrated,
+            'total_assets_to_migrate' => $total_assets_to_migrate,
             'attachments_zipped' => $attachments_zipped_so_far + $attachments_in_this_zip,
+            'total_files_uploaded' => $current_files_uploaded + $files_in_this_batch,
             'remaining_attachments' => $remaining_after_this,
             'has_more_batches' => $has_more_batches,
-            'message' => $has_more_batches 
-                ? "Zip batch {$current_zip_batch} sent to middleware. {$remaining_after_this} attachments remaining. Wait for confirmation then continue." 
+            'message' => $has_more_batches
+                ? "Zip batch {$current_zip_batch} sent to middleware. {$remaining_after_this} attachments remaining. Wait for confirmation then continue."
                 : 'Final zip batch sent to middleware. Wait for confirmation before closing this page.',
         ];
     }
@@ -884,10 +918,11 @@ class ZipMigrator {
      * @param int $limit_attachments Maximum number of attachments to migrate (0 for all). Used for testing.
      * @return array|WP_Error Result data or error.
      */
-    public function start_migration($limit_attachments = 0) {
+    public function start_migration($limit_attachments = 0)
+    {
         // Reset previous status for fresh start
         $this->reset_migration_status();
-        
+
         return $this->start_or_continue_migration(false, $limit_attachments);
     }
 
@@ -896,14 +931,16 @@ class ZipMigrator {
      * 
      * @return array|WP_Error Result data or error.
      */
-    public function continue_migration() {
+    public function continue_migration()
+    {
         return $this->start_or_continue_migration(true, 0);
     }
 
     /**
      * AJAX handler for starting zip migration.
      */
-    public function ajax_start_zip_migration() {
+    public function ajax_start_zip_migration()
+    {
         check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
 
         if (!current_user_can('manage_options')) {
@@ -921,7 +958,7 @@ class ZipMigrator {
 
         // For testing, allow limiting total attachments processed (0 = use setting batch size)
         $limit_attachments = isset($_POST['limit_attachments']) ? intval($_POST['limit_attachments']) : 0;
-        
+
         $result = $this->start_migration($limit_attachments);
 
         if (is_wp_error($result)) {
@@ -934,7 +971,8 @@ class ZipMigrator {
     /**
      * AJAX handler for continuing zip migration (next batch).
      */
-    public function ajax_continue_zip_migration() {
+    public function ajax_continue_zip_migration()
+    {
         check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
 
         if (!current_user_can('manage_options')) {
@@ -949,7 +987,7 @@ class ZipMigrator {
         if (empty($settings['middleware_url'])) {
             wp_send_json_error('Middleware URL not configured. Please set it in BlitzCDN settings.');
         }
-        
+
         $result = $this->continue_migration();
 
         if (is_wp_error($result)) {
@@ -962,7 +1000,8 @@ class ZipMigrator {
     /**
      * AJAX handler for getting zip migration status.
      */
-    public function ajax_get_zip_migration_status() {
+    public function ajax_get_zip_migration_status()
+    {
         check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
 
         if (!current_user_can('manage_options')) {
@@ -976,7 +1015,8 @@ class ZipMigrator {
     /**
      * AJAX handler for getting unmigrated attachments count.
      */
-    public function ajax_get_zip_migration_stats() {
+    public function ajax_get_zip_migration_stats()
+    {
         check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
 
         if (!current_user_can('manage_options')) {
@@ -995,7 +1035,8 @@ class ZipMigrator {
     /**
      * AJAX handler for resetting migration status.
      */
-    public function ajax_reset_zip_migration() {
+    public function ajax_reset_zip_migration()
+    {
         check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
 
         if (!current_user_can('manage_options')) {
@@ -1018,9 +1059,10 @@ class ZipMigrator {
      * @param string $migration_id The migration ID to cancel.
      * @return array|WP_Error Result data or error.
      */
-    public function cancel_migration($migration_id = '') {
+    public function cancel_migration($migration_id = '')
+    {
         $current_status = $this->get_migration_status();
-        
+
         // Use current migration ID if not provided
         if (empty($migration_id)) {
             $migration_id = $current_status['migration_id'] ?? '';
@@ -1049,7 +1091,7 @@ class ZipMigrator {
 
         // Notify middleware to cancel
         $endpoint = rtrim($middleware_url, '/') . '/api/cancel';
-        
+
         $headers = [
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
@@ -1109,7 +1151,8 @@ class ZipMigrator {
      * @param \WP_REST_Request $request The REST request.
      * @return \WP_REST_Response The REST response.
      */
-    public function handle_cancel_migration_rest($request) {
+    public function handle_cancel_migration_rest($request)
+    {
         $params = $request->get_json_params();
         $migration_id = $params['migration_id'] ?? '';
 
@@ -1128,7 +1171,8 @@ class ZipMigrator {
     /**
      * AJAX handler for cancelling migration.
      */
-    public function ajax_cancel_zip_migration() {
+    public function ajax_cancel_zip_migration()
+    {
         check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
 
         if (!current_user_can('manage_options')) {
@@ -1136,7 +1180,7 @@ class ZipMigrator {
         }
 
         $migration_id = isset($_POST['migration_id']) ? sanitize_text_field($_POST['migration_id']) : '';
-        
+
         $result = $this->cancel_migration($migration_id);
 
         if (is_wp_error($result)) {
