@@ -659,6 +659,10 @@ if (typeof jQuery === 'undefined') {
         var zipTotalAssets = null; // Locked total assets - set once from backend's total_assets_to_migrate
         var zipHasActiveStatus = false; // True once a migration is active (uploading or processing)
         var zipFinalized = false; // Guard: once true, keep final UI state and ignore transient polls
+        // UI high-water marks - prevent flicker from stale AJAX responses
+        var zipDisplayedUploaded = 0;
+        var zipDisplayedProcessed = 0;
+        var zipDisplayedFailed = 0;
 
         // Load initial stats for zip migration
         function loadZipMigrationStats() {
@@ -680,20 +684,21 @@ if (typeof jQuery === 'undefined') {
                         zipTotalAssets = isNaN(statsTotal) ? zipTotalAssets : statsTotal;
                     }
 
-                    // If we haven't finalized the migration UI, reset stat cards to the initial state.
-                    // If finalized, preserve the final values so subsequent fetches don't clear the completed UI.
-                    if (!zipFinalized) {
+                    // Only reset stat cards when NOT in an active migration and not finalized.
+                    // During active migration, let updateZipStatusUI handle the card updates.
+                    if (!zipFinalized && !zipHasActiveStatus && !zipMigrationInProgress) {
                         $('#blitzcdn-zip-uploaded-count').text('-');
                         $('#blitzcdn-zip-processed-count').text('-');
                         $('#blitzcdn-zip-failed-count').text('-');
                         $('#blitzcdn-zip-progress-bar').css('width', '0%');
                         $('#blitzcdn-zip-progress-text').text('-');
-                    } else {
+                    } else if (zipFinalized) {
                         // If finalized and we have a reliable total, ensure the Uploaded card shows it
                         if (zipTotalAssets && zipTotalAssets > 0) {
                             $('#blitzcdn-zip-uploaded-count').text(zipTotalAssets);
                         }
                     }
+                    // During active migration: do NOT touch the stat cards, let status polling handle them
 
                     // Ensure Start button state matches the latest attachment count
                     updateZipStartButtonByCount();
@@ -735,6 +740,10 @@ if (typeof jQuery === 'undefined') {
             zipMigrationInProgress = true;
             zipHasActiveStatus = true;
             zipCurrentBatchConfirmed = false;
+            // Reset UI high-water marks for fresh start
+            zipDisplayedUploaded = 0;
+            zipDisplayedProcessed = 0;
+            zipDisplayedFailed = 0;
             // zipTotalAssets will be locked from first status response containing total_assets_to_migrate
             zipFinalized = false; // allow UI updates while a migration runs
             zipLog('Starting migration...', 'info');
@@ -958,6 +967,10 @@ if (typeof jQuery === 'undefined') {
                     stopZipStatusPolling();
                     zipSafeToQuitAlertShown = false;
                     zipTotalAssets = null; // reset locked denominator
+                    // Reset UI high-water marks
+                    zipDisplayedUploaded = 0;
+                    zipDisplayedProcessed = 0;
+                    zipDisplayedFailed = 0;
                     zipFinalized = false; // allow UI to be reset after reset
                     $('#blitzcdn-zip-migration-status').hide();
                     $('#blitzcdn-zip-reset-btn').hide();
@@ -1226,15 +1239,28 @@ if (typeof jQuery === 'undefined') {
             var processed = data.processed !== undefined ? (parseInt(data.processed, 10) || 0) : 0;
             var failed = data.failed !== undefined ? (parseInt(data.failed, 10) || 0) : 0;
 
-            // Update stat cards with backend values
-            $('#blitzcdn-zip-uploaded-count').text(uploaded >= 0 ? uploaded : '-');
-            $('#blitzcdn-zip-processed-count').text(processed >= 0 ? processed : '-');
-            $('#blitzcdn-zip-failed-count').text(failed >= 0 ? failed : '-');
+            // Apply high-water-mark guards to prevent flicker from stale AJAX responses
+            // Never display a value lower than what we've already shown
+            if (uploaded >= zipDisplayedUploaded) {
+                zipDisplayedUploaded = uploaded;
+            }
+            if (processed >= zipDisplayedProcessed) {
+                zipDisplayedProcessed = processed;
+            }
+            if (failed >= zipDisplayedFailed) {
+                zipDisplayedFailed = failed;
+            }
+
+            // Update stat cards with guarded values (never decrease)
+            $('#blitzcdn-zip-uploaded-count').text(zipDisplayedUploaded > 0 ? zipDisplayedUploaded : '-');
+            $('#blitzcdn-zip-processed-count').text(zipDisplayedProcessed > 0 ? zipDisplayedProcessed : '-');
+            $('#blitzcdn-zip-failed-count').text(zipDisplayedFailed > 0 ? zipDisplayedFailed : '-');
 
             // Progress is based on processed+failed out of total assets (represents completed work)
             // If we've finalized the migration UI, don't overwrite the final display
             if (!zipFinalized) {
-                var completed = processed + failed;
+                // Use guarded values for progress to prevent jumps
+                var completed = zipDisplayedProcessed + zipDisplayedFailed;
                 var percent = 0;
 
                 if (zipTotalAssets && zipTotalAssets > 0) {

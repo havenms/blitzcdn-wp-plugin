@@ -327,6 +327,7 @@ class ZipMigrator
             // Preserve cumulative counters - don't reset to 0!
             'processed' => intval($current_status['processed'] ?? 0),
             'failed' => intval($current_status['failed'] ?? 0),
+            'total_files_uploaded' => intval($current_status['total_files_uploaded'] ?? 0),
             'safe_to_quit' => false,
         ]);
 
