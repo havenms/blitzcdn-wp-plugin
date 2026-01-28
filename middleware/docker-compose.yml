@@ -1,0 +1,54 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: blitzcdn-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    # Expose Redis on a high, randomized host port by default to avoid collisions
+    ports:
+      - "${REDIS_HOST_PORT:-54873}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  middleware:
+    build: .
+    container_name: blitzcdn-middleware
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379
+    # Map middleware container port 3000 to a high host port by default to reduce collisions
+    ports:
+      - "${MIDDLEWARE_HOST_PORT:-51729}:3000"
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "crazycatoutfitters-local.local:host-gateway"
+    volumes:
+      - job-data:/app/data
+    # Healthcheck is defined in the Dockerfile (checks /health)
+    # Uncomment below if you prefer compose-managed healthcheck
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 5s
+
+volumes:
+  redis-data:
+    name: blitzcdn-redis-data
+  job-data:
+    name: blitzcdn-job-data
+
+networks:
+  default:
+    name: blitzcdn-network

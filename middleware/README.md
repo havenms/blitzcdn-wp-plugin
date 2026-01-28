@@ -27,6 +27,22 @@ Copy `.env.example` to `.env` and configure:
 cp .env.example .env
 ```
 
+### Understanding Batch Settings
+
+The middleware uses two different "batch" concepts:
+
+1. **BATCH_SIZE** (default: 10) - Number of attachments processed per webhook callback
+   - After processing this many attachments, the middleware sends a webhook to WordPress
+   - WordPress updates postmeta for these attachments immediately
+   - Example: 2000 attachments = 200 webhook callbacks (2000 / 10)
+
+2. **PARALLEL_UPLOADS** (default: 5) - Concurrent file uploads within a batch
+   - While processing each batch, this many files upload simultaneously to Appwrite
+   - Higher values = faster uploads but more memory/connection usage
+   - Example: Processing batch of 10 attachments (~40 files with sizes) = 8 parallel upload rounds
+
+**Note**: The WordPress plugin's "Zip Batch Size" setting is different - it controls how many attachments to include in one zip file (separate from middleware batching).
+
 ### Environment Variables
 
 | Variable | Description | Required |
@@ -41,8 +57,11 @@ cp .env.example .env
 | `APPWRITE_DB_ID` | Database ID for tracking uploads (optional) | No |
 | `APPWRITE_COLLECTION_ID` | Collection ID for tracking uploads (optional) | No |
 | `APPWRITE_CDN_DOMAIN` | Custom CDN domain for file URLs | No |
-| `PARALLEL_UPLOADS` | Number of concurrent uploads (default: 5) | No |
+| `BATCH_SIZE` | Attachments per webhook callback batch (default: 10) | No |
+| `PARALLEL_UPLOADS` | Concurrent file uploads within each batch (default: 5) | No |
 | `MAX_RETRIES` | Max retry attempts for failed uploads (default: 3) | No |
+| `MAX_ZIP_SIZE_MB` | Maximum zip file size in MB (default: 2048 = 2GB) | No |
+| `NODE_TLS_REJECT_UNAUTHORIZED` | Set to `0` to disable SSL verification (local dev only) | No |
 
 ## Running
 
@@ -53,6 +72,14 @@ bun run dev
 ```
 
 This runs the server with hot-reload enabled.
+
+**Local Development with Self-Signed SSL**: If your WordPress site uses a self-signed certificate (e.g., Local by Flywheel, Laravel Valet), add to `.env`:
+
+```bash
+NODE_TLS_REJECT_UNAUTHORIZED=0
+```
+
+⚠️ **Never use this in production** - it disables SSL certificate verification.
 
 ### Production
 
@@ -260,6 +287,61 @@ WantedBy=multi-user.target
 4. **File Validation**: The middleware validates zip structure and sanitizes file paths.
 
 5. **Rate Limiting**: Consider adding rate limiting at the reverse proxy level.
+
+## Handling Large-Scale Migrations (18,000+ files)
+
+The system is designed to handle large migrations efficiently:
+
+### File Cap Strategy
+
+- WordPress enforces a **10,000 file cap per zip** (originals + sizes combined)
+- For 18,000 files, expect 2-3 migration runs depending on image size configurations
+- Each migration can be run independently - the system tracks what's already migrated
+
+### Background Processing
+
+1. **Initial Upload**: WordPress uploads the zip to middleware
+2. **Immediate Webhook**: Middleware sends "received" status immediately
+3. **Safe to Close**: User can close browser after receiving confirmation
+4. **Async Processing**: Middleware processes files in background
+5. **Batch Callbacks**: WordPress receives progress updates every 10 attachments (configurable via `BATCH_SIZE`)
+6. **Final Webhook**: Completion status sent when all files are processed
+
+### Performance Tuning
+
+For large migrations, adjust these environment variables:
+
+```bash
+# Process more files before sending webhook (reduces callback overhead)
+BATCH_SIZE=20
+
+# Upload more files in parallel (faster but uses more memory/connections)
+PARALLEL_UPLOADS=10
+
+# Increase max zip size if needed (default 2GB)
+MAX_ZIP_SIZE_MB=3072
+
+# More aggressive retries for flaky networks
+MAX_RETRIES=5
+```
+
+### Memory Considerations
+
+- Each parallel upload holds files in memory
+- Recommended RAM: 1GB + (average file size × PARALLEL_UPLOADS)
+- Example: 5MB average file × 10 parallel = 50MB + 1GB = ~1.1GB minimum
+- Docker: Increase memory limit in docker-compose.yml if needed
+
+### Multiple Migration Runs
+
+If you need to migrate 18,000 files:
+
+1. **First Run**: Configure `zip_batch_size=100` in WordPress (will process ~400-500 attachments due to 10k file cap)
+2. **Monitor**: Check WordPress admin for completion status
+3. **Second Run**: Click "Start Fast Migration" again - only unmigrated files will be included
+4. **Repeat**: Continue until all files are migrated
+
+The system automatically excludes already-migrated attachments, so multiple runs are safe and efficient.
 
 ## Monitoring
 

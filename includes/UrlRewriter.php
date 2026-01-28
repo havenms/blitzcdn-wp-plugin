@@ -6,6 +6,84 @@ class UrlRewriter {
 
     private $serve_from_cdn;
 
+    private function resolve_named_size($attachment_id, $size, $wp_meta = null) {
+        if (is_string($size) && $size !== '') {
+            return $size;
+        }
+
+        if (!is_array($size) || empty($size)) {
+            return '';
+        }
+
+        $wp_meta = is_array($wp_meta) ? $wp_meta : \wp_get_attachment_metadata($attachment_id);
+        $w = isset($size[0]) ? (int) $size[0] : 0;
+        $h = isset($size[1]) ? (int) $size[1] : 0;
+
+        if (is_array($wp_meta) && !empty($wp_meta['sizes']) && is_array($wp_meta['sizes']) && ($w > 0 || $h > 0)) {
+            foreach ($wp_meta['sizes'] as $name => $info) {
+                $iw = isset($info['width']) ? (int) $info['width'] : 0;
+                $ih = isset($info['height']) ? (int) $info['height'] : 0;
+
+                if ($w > 0 && $h > 0 && $iw === $w && $ih === $h) {
+                    return $name;
+                }
+
+                if ($w > 0 && $h === 0 && $iw === $w) {
+                    return $name;
+                }
+
+                if ($h > 0 && $w === 0 && $ih === $h) {
+                    return $name;
+                }
+            }
+
+            $best_name = '';
+            $best_score = null;
+            foreach ($wp_meta['sizes'] as $name => $info) {
+                $iw = isset($info['width']) ? (int) $info['width'] : 0;
+                $ih = isset($info['height']) ? (int) $info['height'] : 0;
+
+                if ($iw <= 0 && $ih <= 0) {
+                    continue;
+                }
+
+                $score = 0;
+                if ($w > 0) {
+                    $score += abs($iw - $w);
+                }
+                if ($h > 0) {
+                    $score += abs($ih - $h);
+                }
+
+                if ($best_score === null || $score < $best_score) {
+                    $best_score = $score;
+                    $best_name = $name;
+                }
+            }
+
+            if ($best_name !== '') {
+                return $best_name;
+            }
+        }
+
+        $intermediate = \image_get_intermediate_size($attachment_id, $size);
+        if (!is_array($intermediate) || empty($intermediate['file'])) {
+            return '';
+        }
+
+        if (!is_array($wp_meta) || empty($wp_meta['sizes']) || !is_array($wp_meta['sizes'])) {
+            return '';
+        }
+
+        foreach ($wp_meta['sizes'] as $name => $info) {
+            if (!empty($info['file']) && $info['file'] === $intermediate['file']) {
+                return $name;
+            }
+        }
+
+        return '';
+    }
+
     public function __construct() {
         $settings = get_option('blitzcdn_settings', []);
         $this->serve_from_cdn = $settings['serve_from_cdn'] ?? false;
@@ -49,14 +127,10 @@ class UrlRewriter {
         } else {
             $sizes_meta = get_post_meta($attachment_id, '_blitzcdn_sizes', true);
             if (is_array($sizes_meta)) {
-                // $size can be a string or array [w, h]. If array, WP tries to find the best match.
-                // Here we assume standard named sizes or we need to map dimensions.
-                // For simplicity, if $size is a string and exists in our meta, use it.
-                if (is_string($size) && isset($sizes_meta[$size])) {
-                    $image[0] = $sizes_meta[$size]['url'];
-                } 
-                // If $size is array, we might need to find the matching size in metadata.
-                // This is complex. For now, let's handle named sizes.
+                $named_size = $this->resolve_named_size($attachment_id, $size);
+                if ($named_size !== '' && isset($sizes_meta[$named_size]['url'])) {
+                    $image[0] = $sizes_meta[$named_size]['url'];
+                }
             }
         }
 
@@ -81,19 +155,22 @@ class UrlRewriter {
             }
         } else {
             $sizes_meta = get_post_meta($id, '_blitzcdn_sizes', true);
-            if (is_array($sizes_meta) && is_string($size) && isset($sizes_meta[$size])) {
-                $cdn_url = $sizes_meta[$size]['url'];
-                
-                // Get dimensions from WP metadata
+            if (is_array($sizes_meta)) {
                 $meta = wp_get_attachment_metadata($id);
-                $width = 0;
-                $height = 0;
-                if (is_array($meta) && isset($meta['sizes'][$size])) {
-                    $width = $meta['sizes'][$size]['width'];
-                    $height = $meta['sizes'][$size]['height'];
-                }
+                $named_size = $this->resolve_named_size($id, $size, $meta);
 
-                return [$cdn_url, $width, $height, true];
+                if ($named_size !== '' && isset($sizes_meta[$named_size]['url'])) {
+                    $cdn_url = $sizes_meta[$named_size]['url'];
+
+                    $width = 0;
+                    $height = 0;
+                    if (is_array($meta) && isset($meta['sizes'][$named_size])) {
+                        $width = $meta['sizes'][$named_size]['width'];
+                        $height = $meta['sizes'][$named_size]['height'];
+                    }
+
+                    return [$cdn_url, $width, $height, true];
+                }
             }
         }
 
