@@ -415,6 +415,117 @@ class Settings
                     </div>
                 </div>
             <?php endif; ?>
+
+            <hr>
+
+            <h2>Download Media by Email</h2>
+            <p>Download all media files associated with a specific email address from Appwrite. This creates new WordPress attachments with proper directory structure and naming conventions.</p>
+
+            <?php if (!$is_configured): ?>
+                <div style="background: #fee; border-left: 4px solid #dc3545; padding: 12px; margin: 20px 0; border-radius: 4px;">
+                    <p style="margin: 0; color: #333;">
+                        <strong>🔒 Feature Locked</strong><br>
+                        This feature is disabled until Appwrite is properly configured.
+                    </p>
+                </div>
+            <?php else: ?>
+                <div style="background: #e7f3ff; border-left: 4px solid #2271b1; padding: 12px; margin: 20px 0; border-radius: 4px;">
+                    <p style="margin: 0 0 10px 0; color: #333;">
+                        <strong>How it works:</strong>
+                    </p>
+                    <ul style="margin: 0; padding-left: 20px; color: #555;">
+                        <li>Enter an email address to query files in Appwrite Database</li>
+                        <li>Downloads all files associated with that email</li>
+                        <li>Creates WordPress attachments with proper metadata</li>
+                        <li>Files are saved in year/month directory structure</li>
+                        <li>Skips files that already exist as WordPress attachments</li>
+                        <li>Generates thumbnail sizes automatically</li>
+                    </ul>
+                </div>
+
+                <div style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                    <h3 style="margin-top: 0;">Email Address</h3>
+                    <p>
+                        <input type="email" id="blitzcdn-email-input" 
+                            placeholder="user@example.com"
+                            style="width: 100%; max-width: 400px; padding: 8px;"
+                            value="">
+                    </p>
+                    <p>
+                        <button type="button" id="blitzcdn-check-email-btn" class="button button-primary">
+                            Check Files for Email
+                        </button>
+                    </p>
+
+                    <div id="blitzcdn-email-stats" style="display: none; margin-top: 15px; padding: 15px; background: #f9f9f9; border-left: 4px solid #2271b1;">
+                        <p style="margin: 0;"><strong>Found <span id="blitzcdn-email-files-count">0</span> file(s)</strong></p>
+                    </div>
+
+                    <p style="margin-top: 15px;">
+                        <strong>Operation Mode:</strong><br>
+                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; margin: 8px 0;">
+                            <input type="radio" name="blitzcdn-email-mode" value="link" checked style="margin-top: 3px;">
+                            <span>
+                                <strong>Link Only (Fast)</strong> - Create WordPress attachments pointing to CDN URLs<br>
+                                <span style="color: #666; font-size: 13px;">
+                                    Files stay on Appwrite/CDN. WordPress just creates media library entries. Much faster!
+                                </span>
+                            </span>
+                        </label>
+                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; margin: 8px 0;">
+                            <input type="radio" name="blitzcdn-email-mode" value="download" style="margin-top: 3px;">
+                            <span>
+                                <strong>Download (Slow)</strong> - Download files and create WordPress attachments<br>
+                                <span style="color: #666; font-size: 13px;">
+                                    Downloads actual files to your server. Slower but gives you local copies.
+                                </span>
+                            </span>
+                        </label>
+                    </p>
+                </div>
+
+                <p>
+                    <button type="button" id="blitzcdn-email-redownload-btn" class="button button-primary"
+                        style="display: none;"
+                        data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>"
+                        data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">
+                        Start Process
+                    </button>
+                    <button type="button" id="blitzcdn-cancel-email-redownload-btn" class="button button-secondary"
+                        style="display: none;">
+                        Cancel
+                    </button>
+                </p>
+
+                <div id="blitzcdn-email-redownload-progress" style="margin-top: 20px; display: none;">
+                    <div
+                        style="background: #f0f0f1; border: 1px solid #ccc; height: 20px; width: 100%; border-radius: 4px; overflow: hidden;">
+                        <div id="blitzcdn-email-redownload-progress-bar"
+                            style="background: linear-gradient(90deg, #2271b1, #3794ff); height: 100%; width: 0%; transition: width 0.3s ease;">
+                        </div>
+                    </div>
+                    <p id="blitzcdn-email-redownload-progress-text" style="margin-top: 10px; font-weight: 500;">0%</p>
+
+                    <div id="blitzcdn-email-redownload-stats" style="display: flex; gap: 20px; margin-top: 15px;">
+                        <div style="background: #d4edda; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #155724;" id="blitzcdn-email-success-count">0</div>
+                            <div style="font-size: 12px; color: #155724;">Processed</div>
+                        </div>
+                        <div style="background: #fff3cd; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #856404;" id="blitzcdn-email-skipped-count">0</div>
+                            <div style="font-size: 12px; color: #856404;">Already Exist</div>
+                        </div>
+                        <div style="background: #f8d7da; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold; color: #721c24;" id="blitzcdn-email-error-count">0</div>
+                            <div style="font-size: 12px; color: #721c24;">Errors</div>
+                        </div>
+                    </div>
+
+                    <div id="blitzcdn-email-redownload-log"
+                        style="max-height: 300px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; border: 1px solid #333; padding: 15px; margin-top: 15px; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; border-radius: 4px;">
+                    </div>
+                </div>
+            <?php endif; ?>
         </div>
         <?php
     }

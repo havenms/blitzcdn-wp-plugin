@@ -14,6 +14,7 @@ class Core {
     private $compatibility;
     private $background_migrator;
     private $redownloader;
+    private $email_redownloader;
     private $zip_migrator;
 
     public static function get_instance() {
@@ -48,6 +49,9 @@ class Core {
 
         // Initialize Redownloader (Goodbye Procedure)
         $this->redownloader = new Redownloader($this->appwrite_client);
+
+        // Initialize Email Redownloader
+        $this->email_redownloader = new EmailRedownloader($this->appwrite_client);
 
         // Initialize Zip Migrator (must be instantiated to register REST routes)
         $this->zip_migrator = new ZipMigrator();
@@ -167,6 +171,10 @@ class Core {
 
     public function get_redownloader() {
         return $this->redownloader;
+    }
+
+    public function get_email_redownloader() {
+        return $this->email_redownloader;
     }
 
     public function get_zip_migrator() {

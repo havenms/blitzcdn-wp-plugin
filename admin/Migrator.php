@@ -26,6 +26,11 @@ class Migrator {
         add_action('wp_ajax_blitzcdn_get_redownload_stats', [$this, 'ajax_get_redownload_stats']);
         add_action('wp_ajax_blitzcdn_redownload_batch', [$this, 'ajax_redownload_batch']);
 
+        // Email Redownload Actions
+        add_action('wp_ajax_blitzcdn_get_email_stats', [$this, 'ajax_get_email_stats']);
+        add_action('wp_ajax_blitzcdn_email_redownload_batch', [$this, 'ajax_email_redownload_batch']);
+        add_action('wp_ajax_blitzcdn_email_link_batch', [$this, 'ajax_email_link_batch']);
+
         // Zip Migration Actions - delegate to proxy methods to avoid circular dependency
         add_action('wp_ajax_blitzcdn_start_zip_migration', [$this, 'ajax_start_zip_migration_proxy']);
         add_action('wp_ajax_blitzcdn_continue_zip_migration', [$this, 'ajax_continue_zip_migration_proxy']);
@@ -297,6 +302,100 @@ class Migrator {
 
         $redownloader = Core::get_instance()->get_redownloader();
         $results = $redownloader->process_batch($ids, $delete_from_appwrite);
+
+        wp_send_json_success($results);
+    }
+
+    /**
+     * AJAX: Get statistics for email-based redownload.
+     */
+    public function ajax_get_email_stats() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $email = isset($_POST['email']) ? sanitize_email($_POST['email']) : '';
+        
+        if (empty($email) || !is_email($email)) {
+            wp_send_json_error('Invalid email address');
+        }
+
+        // Verify Appwrite client is configured
+        if (!$this->appwrite_client->is_configured()) {
+            wp_send_json_error('Appwrite is not configured. Please check your environment settings.');
+        }
+
+        $current_user = wp_get_current_user();
+        $remote_ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
+        error_log(sprintf('BlitzCDN: ajax_get_email_stats called by %s (%s) email=%s', $current_user->user_login, $remote_ip, $email));
+
+        $email_redownloader = Core::get_instance()->get_email_redownloader();
+        $stats = $email_redownloader->get_email_stats($email);
+
+        wp_send_json($stats);
+    }
+
+    /**
+     * AJAX: Process a batch of files for email-based redownload.
+     */
+    public function ajax_email_redownload_batch() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $file_ids = isset($_POST['file_ids']) ? array_map('sanitize_text_field', $_POST['file_ids']) : [];
+        $create_attachments = isset($_POST['create_attachments']) ? ($_POST['create_attachments'] === 'true') : true;
+
+        if (empty($file_ids)) {
+            wp_send_json_error('No file IDs provided');
+        }
+
+        // Verify Appwrite client is configured
+        if (!$this->appwrite_client->is_configured()) {
+            wp_send_json_error('Appwrite is not configured. Please check your environment settings.');
+        }
+
+        $current_user = wp_get_current_user();
+        $remote_ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
+        error_log(sprintf('BlitzCDN: ajax_email_redownload_batch called by %s (%s) files=%s', $current_user->user_login, $remote_ip, implode(',', $file_ids)));
+
+        $email_redownloader = Core::get_instance()->get_email_redownloader();
+        $results = $email_redownloader->process_batch($file_ids, $create_attachments);
+
+        wp_send_json_success($results);
+    }
+
+    /**
+     * AJAX: Process a batch of files for email-based linking (no download).
+     */
+    public function ajax_email_link_batch() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $file_ids = isset($_POST['file_ids']) ? array_map('sanitize_text_field', $_POST['file_ids']) : [];
+
+        if (empty($file_ids)) {
+            wp_send_json_error('No file IDs provided');
+        }
+
+        // Verify Appwrite client is configured
+        if (!$this->appwrite_client->is_configured()) {
+            wp_send_json_error('Appwrite is not configured. Please check your environment settings.');
+        }
+
+        $current_user = wp_get_current_user();
+        $remote_ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
+        error_log(sprintf('BlitzCDN: ajax_email_link_batch called by %s (%s) files=%s', $current_user->user_login, $remote_ip, implode(',', $file_ids)));
+
+        $email_redownloader = Core::get_instance()->get_email_redownloader();
+        $results = $email_redownloader->link_batch($file_ids);
 
         wp_send_json_success($results);
     }

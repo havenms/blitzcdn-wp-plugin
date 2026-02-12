@@ -31,6 +31,11 @@ class UploadHandler {
      * Phase 1: Upload original file immediately after it's placed in the uploads directory.
      */
     public function handle_upload_phase_1($upload) {
+        // Skip if EmailRedownloader is running to prevent duplicate uploads
+        if (class_exists('\BlitzCDN\EmailRedownloader') && \BlitzCDN\EmailRedownloader::is_redownloading()) {
+            return $upload;
+        }
+
         if (!$this->appwrite_client->is_configured()) {
             return $upload;
         }
@@ -103,6 +108,11 @@ class UploadHandler {
      * Phase 2: Upload generated sizes.
      */
     public function handle_upload_phase_2($metadata, $attachment_id) {
+        // Skip if EmailRedownloader is running to prevent duplicate uploads
+        if (class_exists('\BlitzCDN\EmailRedownloader') && \BlitzCDN\EmailRedownloader::is_redownloading()) {
+            return $metadata;
+        }
+
         if (!$this->appwrite_client->is_configured()) {
             return $metadata;
         }

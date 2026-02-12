@@ -5,6 +5,7 @@ namespace BlitzCDN;
 use Appwrite\Client;
 use Appwrite\Services\Storage;
 use Appwrite\Services\Databases;
+use Appwrite\Query;
 use Appwrite\InputFile;
 
 class AppwriteClient {
@@ -179,6 +180,77 @@ class AppwriteClient {
             );
         } catch (\Throwable $e) {
             error_log('BlitzCDN: Failed to create document: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * List documents by email query with pagination support.
+     *
+     * @param string $email The email to filter by.
+     * @return array|false Array of documents on success, false on failure.
+     */
+    public function list_documents_by_email($email) {
+        if (!$this->is_configured || !$this->db_id || !$this->collection_id) {
+            return false;
+        }
+
+        try {
+            $all_documents = [];
+            $limit = 100; // Fetch in smaller batches for better performance
+            $offset = 0;
+            $has_more = true;
+
+            while ($has_more) {
+                $response = $this->databases->listDocuments(
+                    $this->db_id,
+                    $this->collection_id,
+                    [
+                        \Appwrite\Query::equal('email', [$email]),
+                        \Appwrite\Query::limit($limit),
+                        \Appwrite\Query::offset($offset)
+                    ]
+                );
+
+                $documents = $response['documents'] ?? [];
+                $all_documents = array_merge($all_documents, $documents);
+
+                // Check if there are more documents to fetch
+                if (count($documents) < $limit) {
+                    $has_more = false;
+                } else {
+                    $offset += $limit;
+                    
+                    // Safety check: prevent infinite loops if API misbehaves
+                    if ($offset > 50000) {
+                        error_log('BlitzCDN: Safety limit reached while fetching documents for email: ' . $email);
+                        break;
+                    }
+                }
+            }
+
+            return $all_documents;
+        } catch (\Throwable $e) {
+            error_log('BlitzCDN: Failed to list documents: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get file metadata from Appwrite Storage.
+     *
+     * @param string $file_id The ID of the file.
+     * @return array|false File metadata on success, false on failure.
+     */
+    public function get_file_metadata($file_id) {
+        if (!$this->is_configured) {
+            return false;
+        }
+
+        try {
+            return $this->storage->getFile($this->bucket_id, $file_id);
+        } catch (\Throwable $e) {
+            error_log('BlitzCDN: Failed to get file metadata: ' . $e->getMessage());
             return false;
         }
     }
