@@ -177,6 +177,10 @@ class Core {
         return $this->email_redownloader;
     }
 
+    public function get_background_email_linker() {
+        return $this->background_email_linker;
+    }
+
     public function get_zip_migrator() {
         return $this->zip_migrator;
     }

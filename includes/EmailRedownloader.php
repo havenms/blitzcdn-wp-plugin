@@ -355,7 +355,7 @@ class EmailRedownloader {
         if (strpos($file_type['type'], 'image/') === 0) {
             // Basic metadata without generating thumbnails
             $metadata = [
-                'file' => ltrim($virtual_file, '/'),
+                'file' => ltrim($attached_file, '/'),
                 'width' => 0,
                 'height' => 0,
                 'sizes' => [] // No local sizes - they're on CDN

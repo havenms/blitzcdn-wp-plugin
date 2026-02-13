@@ -466,9 +466,18 @@ class Settings
                         <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; margin: 8px 0;">
                             <input type="radio" name="blitzcdn-email-mode" value="link" checked style="margin-top: 3px;">
                             <span>
-                                <strong>Link Only (Fast)</strong> - Create WordPress attachments pointing to CDN URLs<br>
+                                <strong>Link Only (Browser)</strong> - Create WordPress attachments pointing to CDN URLs<br>
                                 <span style="color: #666; font-size: 13px;">
-                                    Files stay on Appwrite/CDN. WordPress just creates media library entries. Much faster!
+                                    Files stay on Appwrite/CDN. Processes in your browser. Keep page open until complete.
+                                </span>
+                            </span>
+                        </label>
+                        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; margin: 8px 0;">
+                            <input type="radio" name="blitzcdn-email-mode" value="link-background" style="margin-top: 3px;">
+                            <span>
+                                <strong>Link Only (Background via WP-Cron) 🚀</strong> - Background processing with WP-Cron<br>
+                                <span style="color: #666; font-size: 13px;">
+                                    Creates attachments pointing to CDN. Runs in background via WP-Cron. Close browser anytime! Best for large batches.
                                 </span>
                             </span>
                         </label>
@@ -481,6 +490,54 @@ class Settings
                                 </span>
                             </span>
                         </label>
+                    </p>
+                </div>
+
+                <!-- Background Linking Status -->
+                <div id="blitzcdn-background-link-status" style="display: none; margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #ccd0d4; border-radius: 4px;">
+                    <h3 style="margin-top: 0;">Background Linking Status</h3>
+                    <p><strong>Status:</strong> <span id="blitzcdn-bg-link-status-text">Idle</span></p>
+                    <p><strong>Email:</strong> <span id="blitzcdn-bg-link-email">-</span></p>
+                    
+                    <div style="margin: 15px 0;">
+                        <div style="background: #f0f0f1; border: 1px solid #ccc; height: 20px; width: 100%; border-radius: 4px; overflow: hidden;">
+                            <div id="blitzcdn-bg-link-progress-bar" 
+                                style="background: linear-gradient(90deg, #2271b1, #3794ff); height: 100%; width: 0%; transition: width 0.3s ease;">
+                            </div>
+                        </div>
+                        <p id="blitzcdn-bg-link-progress-text" style="margin-top: 8px; font-weight: 500;">0%</p>
+                    </div>
+
+                    <div style="display: flex; gap: 15px; margin-top: 15px;">
+                        <div style="background: #d4edda; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
+                            <div style="font-size: 20px; font-weight: bold; color: #155724;" id="blitzcdn-bg-link-processed">0</div>
+                            <div style="font-size: 12px; color: #155724;">Processed</div>
+                        </div>
+                        <div style="background: #e7f3ff; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
+                            <div style="font-size: 20px; font-weight: bold; color: #2271b1;" id="blitzcdn-bg-link-successful">0</div>
+                            <div style="font-size: 12px; color: #2271b1;">Successful</div>
+                        </div>
+                        <div style="background: #fff3cd; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
+                            <div style="font-size: 20px; font-weight: bold; color: #856404;" id="blitzcdn-bg-link-skipped">0</div>
+                            <div style="font-size: 12px; color: #856404;">Skipped</div>
+                        </div>
+                        <div style="background: #f8d7da; padding: 10px 15px; border-radius: 4px; flex: 1; text-align: center;">
+                            <div style="font-size: 20px; font-weight: bold; color: #721c24;" id="blitzcdn-bg-link-failed">0</div>
+                            <div style="font-size: 12px; color: #721c24;">Failed</div>
+                        </div>
+                    </div>
+
+                    <p style="margin-top: 15px;">
+                        <button type="button" id="blitzcdn-stop-background-link-btn" class="button button-secondary"
+                            data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>"
+                            data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">
+                            Stop Background Linking
+                        </button>
+                        <button type="button" id="blitzcdn-refresh-background-link-btn" class="button"
+                            data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>"
+                            data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">
+                            Refresh Status
+                        </button>
                     </p>
                 </div>
 

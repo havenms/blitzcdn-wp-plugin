@@ -30,6 +30,11 @@ class Migrator {
         add_action('wp_ajax_blitzcdn_get_email_stats', [$this, 'ajax_get_email_stats']);
         add_action('wp_ajax_blitzcdn_email_redownload_batch', [$this, 'ajax_email_redownload_batch']);
         add_action('wp_ajax_blitzcdn_email_link_batch', [$this, 'ajax_email_link_batch']);
+        
+        // Background email linking actions
+        add_action('wp_ajax_blitzcdn_start_background_link', [$this, 'ajax_start_background_link']);
+        add_action('wp_ajax_blitzcdn_stop_background_link', [$this, 'ajax_stop_background_link']);
+        add_action('wp_ajax_blitzcdn_get_background_link_status', [$this, 'ajax_get_background_link_status']);
 
         // Zip Migration Actions - delegate to proxy methods to avoid circular dependency
         add_action('wp_ajax_blitzcdn_start_zip_migration', [$this, 'ajax_start_zip_migration_proxy']);
@@ -398,5 +403,63 @@ class Migrator {
         $results = $email_redownloader->link_batch($file_ids);
 
         wp_send_json_success($results);
+    }
+
+    /**
+     * AJAX: Start background linking process for email.
+     */
+    public function ajax_start_background_link() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $email = isset($_POST['email']) ? sanitize_email($_POST['email']) : '';
+
+        if (empty($email) || !is_email($email)) {
+            wp_send_json_error('Invalid email address');
+        }
+
+        $background_linker = Core::get_instance()->get_background_email_linker();
+        $result = $background_linker->start_linking($email);
+
+        if ($result['success']) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error($result['message']);
+        }
+    }
+
+    /**
+     * AJAX: Stop background linking process.
+     */
+    public function ajax_stop_background_link() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $background_linker = Core::get_instance()->get_background_email_linker();
+        $background_linker->stop_linking();
+
+        wp_send_json_success('Background linking stopped');
+    }
+
+    /**
+     * AJAX: Get background linking status.
+     */
+    public function ajax_get_background_link_status() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $background_linker = Core::get_instance()->get_background_email_linker();
+        $status = $background_linker->get_status();
+
+        wp_send_json_success($status);
     }
 }
