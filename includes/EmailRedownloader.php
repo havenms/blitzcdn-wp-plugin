@@ -587,8 +587,12 @@ class EmailRedownloader {
      *     @type int    $galleries_updated Number of galleries updated
      * }
      */
-    public function reconnect_woocommerce_images() {
+    public function reconnect_woocommerce_images($offset = 0, $limit = 50) {
         global $wpdb;
+        
+        // Increase time limit and memory for this operation
+        @set_time_limit(300);
+        wp_raise_memory_limit('admin');
         
         $result = [
             'status' => 'error',
@@ -596,7 +600,10 @@ class EmailRedownloader {
             'attachments_scanned' => 0,
             'products_updated' => 0,
             'variations_updated' => 0,
-            'galleries_updated' => 0
+            'galleries_updated' => 0,
+            'total_attachments' => 0,
+            'has_more' => false,
+            'next_offset' => 0
         ];
         
         try {
@@ -607,24 +614,42 @@ class EmailRedownloader {
                 return $result;
             }
             
-            // Get all attachments that have BlitzCDN metadata
-            $blitzcdn_attachments = $wpdb->get_results(
-                "SELECT DISTINCT p.ID, pm_file.meta_value as filename
+            // Get total count first
+            $total_count = $wpdb->get_var(
+                "SELECT COUNT(DISTINCT p.ID)
                 FROM {$wpdb->posts} p
                 INNER JOIN {$wpdb->postmeta} pm_blitz ON p.ID = pm_blitz.post_id
-                LEFT JOIN {$wpdb->postmeta} pm_file ON p.ID = pm_file.post_id AND pm_file.meta_key = '_wp_attached_file'
                 WHERE p.post_type = 'attachment'
                 AND p.post_status = 'inherit'
                 AND pm_blitz.meta_key = '_blitzcdn_file_id'
-                AND pm_blitz.meta_value != ''
-                ORDER BY p.ID DESC"
+                AND pm_blitz.meta_value != ''"
             );
             
-            if (empty($blitzcdn_attachments)) {
+            $result['total_attachments'] = (int)$total_count;
+            
+            if ($total_count == 0) {
                 $result['status'] = 'success';
                 $result['message'] = 'No CDN attachments found';
                 return $result;
             }
+            
+            // Get batch of attachments with limit and offset
+            $blitzcdn_attachments = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT DISTINCT p.ID, pm_file.meta_value as filename
+                    FROM {$wpdb->posts} p
+                    INNER JOIN {$wpdb->postmeta} pm_blitz ON p.ID = pm_blitz.post_id
+                    LEFT JOIN {$wpdb->postmeta} pm_file ON p.ID = pm_file.post_id AND pm_file.meta_key = '_wp_attached_file'
+                    WHERE p.post_type = 'attachment'
+                    AND p.post_status = 'inherit'
+                    AND pm_blitz.meta_key = '_blitzcdn_file_id'
+                    AND pm_blitz.meta_value != ''
+                    ORDER BY p.ID DESC
+                    LIMIT %d OFFSET %d",
+                    $limit,
+                    $offset
+                )
+            );
             
             $total_products_updated = 0;
             $total_variations_updated = 0;
@@ -662,18 +687,21 @@ class EmailRedownloader {
             $result['variations_updated'] = $total_variations_updated;
             $result['galleries_updated'] = $total_galleries_updated;
             
-            if ($total_products_updated > 0 || $total_variations_updated > 0 || $total_galleries_updated > 0) {
-                $result['status'] = 'success';
-                $result['message'] = sprintf(
-                    'Updated %d products, %d variations, and %d galleries',
-                    $total_products_updated,
-                    $total_variations_updated,
-                    $total_galleries_updated
-                );
-            } else {
-                $result['status'] = 'success';
-                $result['message'] = 'No WooCommerce products needed updating';
-            }
+            // Check if there are more attachments to process
+            $next_offset = $offset + $limit;
+            $result['has_more'] = ($next_offset < $total_count);
+            $result['next_offset'] = $next_offset;
+            
+            $result['status'] = 'success';
+            $result['message'] = sprintf(
+                'Processed %d attachments (offset %d). Found %d products, %d variations, %d galleries to update.',
+                count($blitzcdn_attachments),
+                $offset,
+                $total_products_updated,
+                $total_variations_updated,
+                $total_galleries_updated
+            );
+            
         } catch (\Exception $e) {
             error_log('BlitzCDN: Error reconnecting WooCommerce images: ' . $e->getMessage());
             $result['status'] = 'error';

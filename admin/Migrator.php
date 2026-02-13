@@ -476,6 +476,10 @@ class Migrator {
             return;
         }
 
+        // Get offset parameter for batch processing
+        $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+        $limit = 50; // Process 50 attachments per batch
+
         try {
             $email_redownloader = Core::get_instance()->get_email_redownloader();
             
@@ -484,7 +488,7 @@ class Migrator {
                 return;
             }
             
-            $result = $email_redownloader->reconnect_woocommerce_images();
+            $result = $email_redownloader->reconnect_woocommerce_images($offset, $limit);
 
             if ($result['status'] === 'success') {
                 wp_send_json_success($result);

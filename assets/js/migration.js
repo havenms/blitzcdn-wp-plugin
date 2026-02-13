@@ -2393,6 +2393,15 @@ if (typeof jQuery === "undefined") {
         var $stats = $("#blitzcdn-reconnect-woocommerce-stats");
         var $errorMessage = $("#blitzcdn-reconnect-woocommerce-error-message");
 
+        // Accumulated statistics across all batches
+        var totalStats = {
+          attachments_scanned: 0,
+          products_updated: 0,
+          variations_updated: 0,
+          galleries_updated: 0,
+          total_attachments: 0,
+        };
+
         // Hide previous results
         $status.hide();
         $error.hide();
@@ -2400,7 +2409,7 @@ if (typeof jQuery === "undefined") {
 
         // Show progress
         $progress.show();
-        $progressBar.css("width", "10%");
+        $progressBar.css("width", "5%");
         $progressText.text("Initializing...");
 
         function addLog(msg, type) {
@@ -2423,101 +2432,209 @@ if (typeof jQuery === "undefined") {
           $log.scrollTop($log[0].scrollHeight);
         }
 
+        function processBatch(offset) {
+          ajaxPost(
+            {
+              action: "blitzcdn_reconnect_woocommerce",
+              offset: offset,
+            },
+            function (response) {
+              if (response.success && response.data) {
+                var data = response.data;
+
+                // Update total attachments count on first batch
+                if (offset === 0 && data.total_attachments) {
+                  totalStats.total_attachments = data.total_attachments;
+                  addLog(
+                    "Found " +
+                      data.total_attachments +
+                      " CDN attachments to scan",
+                    "info",
+                  );
+                }
+
+                // Accumulate statistics
+                totalStats.attachments_scanned += data.attachments_scanned || 0;
+                totalStats.products_updated += data.products_updated || 0;
+                totalStats.variations_updated += data.variations_updated || 0;
+                totalStats.galleries_updated += data.galleries_updated || 0;
+
+                // Calculate and update progress
+                var progressPercent = 10;
+                if (totalStats.total_attachments > 0) {
+                  progressPercent =
+                    10 +
+                    Math.floor(
+                      (totalStats.attachments_scanned /
+                        totalStats.total_attachments) *
+                        90,
+                    );
+                }
+                $progressBar.css("width", progressPercent + "%");
+                $progressText.text(
+                  "Processed " +
+                    totalStats.attachments_scanned +
+                    " of " +
+                    totalStats.total_attachments +
+                    " attachments...",
+                );
+
+                // Log batch results if any updates were made
+                if (
+                  data.products_updated > 0 ||
+                  data.variations_updated > 0 ||
+                  data.galleries_updated > 0
+                ) {
+                  addLog(
+                    "Batch " +
+                      Math.floor(offset / 50 + 1) +
+                      ": Updated " +
+                      data.products_updated +
+                      " products, " +
+                      data.variations_updated +
+                      " variations, " +
+                      data.galleries_updated +
+                      " galleries",
+                    "success",
+                  );
+                }
+
+                // Check if there are more batches to process
+                if (data.has_more) {
+                  // Continue with next batch
+                  processBatch(data.next_offset);
+                } else {
+                  // All batches complete
+                  $progressBar.css("width", "100%");
+                  $progressText.text("Complete!");
+
+                  addLog("✓ All batches complete!", "success");
+                  addLog(
+                    "Total attachments scanned: " +
+                      totalStats.attachments_scanned,
+                    "info",
+                  );
+                  addLog(
+                    "Total products updated: " + totalStats.products_updated,
+                    "success",
+                  );
+                  addLog(
+                    "Total variations updated: " +
+                      totalStats.variations_updated,
+                    "success",
+                  );
+                  addLog(
+                    "Total galleries updated: " + totalStats.galleries_updated,
+                    "success",
+                  );
+
+                  $message.text(
+                    "Processing complete - scanned " +
+                      totalStats.attachments_scanned +
+                      " attachments",
+                  );
+
+                  var statsHtml = "";
+                  statsHtml +=
+                    "<strong>Attachments scanned:</strong> " +
+                    totalStats.attachments_scanned +
+                    "<br>";
+                  statsHtml +=
+                    "<strong>Products updated:</strong> " +
+                    totalStats.products_updated +
+                    "<br>";
+                  statsHtml +=
+                    "<strong>Variations updated:</strong> " +
+                    totalStats.variations_updated +
+                    "<br>";
+                  statsHtml +=
+                    "<strong>Galleries updated:</strong> " +
+                    totalStats.galleries_updated;
+
+                  $stats.html(statsHtml);
+                  $status.fadeIn();
+
+                  setTimeout(function () {
+                    $btn
+                      .prop("disabled", false)
+                      .text("Reconnect WooCommerce Images");
+                  }, 1000);
+                }
+              } else {
+                addLog(
+                  "✗ Error: " +
+                    (response.data?.message || "Unknown error occurred"),
+                  "error",
+                );
+                $errorMessage.text(
+                  response.data?.message || "Unknown error occurred",
+                );
+                $error.fadeIn();
+                $btn
+                  .prop("disabled", false)
+                  .text("Reconnect WooCommerce Images");
+              }
+            },
+            function (xhr, status, error) {
+              $progressBar.css("width", "100%");
+              $progressText.text("Failed!");
+
+              var errorMsg = "Request failed";
+
+              // Try to get detailed error message
+              if (xhr && xhr.responseJSON && xhr.responseJSON.data) {
+                if (xhr.responseJSON.data.message) {
+                  errorMsg = xhr.responseJSON.data.message;
+                } else if (typeof xhr.responseJSON.data === "string") {
+                  errorMsg = xhr.responseJSON.data;
+                }
+              } else if (xhr && xhr.responseText) {
+                // Try to parse responseText
+                try {
+                  var parsed = JSON.parse(xhr.responseText);
+                  if (parsed.data && parsed.data.message) {
+                    errorMsg = parsed.data.message;
+                  }
+                } catch (e) {
+                  // If not JSON, might be a PHP error
+                  if (xhr.responseText.length < 500) {
+                    errorMsg = xhr.responseText;
+                  } else {
+                    errorMsg = "Server error occurred (check PHP error log)";
+                  }
+                }
+              } else if (status) {
+                errorMsg = "Request failed: " + status;
+              }
+
+              addLog("✗ " + errorMsg, "error");
+              console.error(
+                "WooCommerce reconnect error:",
+                xhr,
+                status,
+                error,
+              );
+
+              $errorMessage.text(errorMsg);
+              $error.fadeIn();
+              $btn
+                .prop("disabled", false)
+                .text("Reconnect WooCommerce Images");
+            },
+          );
+        }
+
         // Disable button
         $btn.prop("disabled", true).text("Processing...");
 
         addLog("Starting WooCommerce image reconnection...", "info");
-        $progressBar.css("width", "30%");
+        $progressBar.css("width", "10%");
         $progressText.text("Scanning CDN attachments...");
 
-        ajaxPost(
-          {
-            action: "blitzcdn_reconnect_woocommerce",
-          },
-          function (response) {
-            $progressBar.css("width", "100%");
-            $progressText.text("Complete!");
-
-            if (response.success && response.data) {
-              var data = response.data;
-
-              addLog("✓ Scan complete!", "success");
-              addLog(
-                "Attachments scanned: " + (data.attachments_scanned || 0),
-                "info",
-              );
-              addLog(
-                "Products updated: " + (data.products_updated || 0),
-                "success",
-              );
-              addLog(
-                "Variations updated: " + (data.variations_updated || 0),
-                "success",
-              );
-              addLog(
-                "Galleries updated: " + (data.galleries_updated || 0),
-                "success",
-              );
-
-              $message.text(data.message || "Processing complete");
-
-              var statsHtml = "";
-              statsHtml +=
-                "<strong>Attachments scanned:</strong> " +
-                (data.attachments_scanned || 0) +
-                "<br>";
-              statsHtml +=
-                "<strong>Products updated:</strong> " +
-                (data.products_updated || 0) +
-                "<br>";
-              statsHtml +=
-                "<strong>Variations updated:</strong> " +
-                (data.variations_updated || 0) +
-                "<br>";
-              statsHtml +=
-                "<strong>Galleries updated:</strong> " +
-                (data.galleries_updated || 0);
-
-              $stats.html(statsHtml);
-              $status.fadeIn();
-
-              setTimeout(function () {
-                $btn
-                  .prop("disabled", false)
-                  .text("Reconnect WooCommerce Images");
-              }, 1000);
-            } else {
-              addLog(
-                "✗ Error: " +
-                  (response.data?.message || "Unknown error occurred"),
-                "error",
-              );
-              $errorMessage.text(
-                response.data?.message || "Unknown error occurred",
-              );
-              $error.fadeIn();
-              $btn.prop("disabled", false).text("Reconnect WooCommerce Images");
-            }
-          },
-          function (xhr, status, error) {
-            $progressBar.css("width", "100%");
-            $progressText.text("Failed!");
-
-            var errorMsg = "Request failed";
-
-            // Try to get detailed error message
-            if (xhr && xhr.responseJSON && xhr.responseJSON.data) {
-              if (xhr.responseJSON.data.message) {
-                errorMsg = xhr.responseJSON.data.message;
-              } else if (typeof xhr.responseJSON.data === "string") {
-                errorMsg = xhr.responseJSON.data;
-              }
-            } else if (xhr && xhr.responseText) {
-              // Try to parse responseText
-              try {
-                var parsed = JSON.parse(xhr.responseText);
-                if (parsed.data && parsed.data.message) {
-                  errorMsg = parsed.data.message;
+        // Start processing from offset 0
+        processBatch(0);
+      },
+    );
                 }
               } catch (e) {
                 // If not JSON, might be a PHP error
