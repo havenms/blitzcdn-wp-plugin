@@ -730,15 +730,27 @@ class Migrator {
                 if ($needs_update && $new_cdn_url) {
                     $log_entry['checks'][] = '💾 Updating database...';
                     
+                    // Clear WordPress cache for this post first
+                    clean_post_cache($attachment->ID);
+                    
                     // Update _blitzcdn_cdn_url
                     update_post_meta($attachment->ID, '_blitzcdn_cdn_url', $new_cdn_url);
                     
                     // Update post GUID 
-                    $wpdb->update(
+                    $update_result = $wpdb->update(
                         $wpdb->posts,
                         ['guid' => $new_cdn_url],
-                        ['ID' => $attachment->ID]
+                        ['ID' => $attachment->ID],
+                        ['%s'],
+                        ['%d']
                     );
+                    
+                    // Log the update result
+                    if ($update_result === false) {
+                        $log_entry['checks'][] = '✗ Failed to update GUID: ' . $wpdb->last_error;
+                    } else {
+                        $log_entry['checks'][] = '✓ Updated GUID (rows affected: ' . $update_result . ')';
+                    }
                     
                     // Fix image size URLs in metadata
                     $metadata = wp_get_attachment_metadata($attachment->ID);
@@ -806,14 +818,24 @@ class Migrator {
                         }
                         
                         if ($sizes_fixed > 0) {
-                            wp_update_attachment_metadata($attachment->ID, $metadata);
-                            $log_entry['checks'][] = '✓ Fixed ' . $sizes_fixed . ' image sizes: ' . implode(', ', $sizes_details);
+                            $metadata_update_result = wp_update_attachment_metadata($attachment->ID, $metadata);
+                            if ($metadata_update_result) {
+                                $log_entry['checks'][] = '✓ Fixed ' . $sizes_fixed . ' image sizes: ' . implode(', ', $sizes_details);
+                            } else {
+                                $log_entry['checks'][] = '✗ Failed to save metadata for image sizes';
+                            }
                         } else if (!empty($sizes_details)) {
                             $log_entry['checks'][] = '⚠ Found broken sizes but could not fix: ' . implode(', ', $sizes_details);
                         }
                     }
                     
-                    $log_entry['checks'][] = '✓ Successfully updated';
+                    // Verify the update was saved
+                    $saved_cdn_url = get_post_meta($attachment->ID, '_blitzcdn_cdn_url', true);
+                    if ($saved_cdn_url === $new_cdn_url) {
+                        $log_entry['checks'][] = '✓ Verified - URL saved correctly';
+                    } else {
+                        $log_entry['checks'][] = '✗ WARNING - URL not saved! Expected: ' . $new_cdn_url . ', Got: ' . $saved_cdn_url;
+                    }
                     
                     // Add to processed URLs log
                     $processed_urls[] = [
@@ -899,8 +921,30 @@ class Migrator {
                         }
                         
                         if ($sizes_fixed > 0) {
-                            wp_update_attachment_metadata($attachment->ID, $metadata);
-                            $log_entry['checks'][] = '🔧 Fixed ' . $sizes_fixed . ' broken image sizes: ' . implode(', ', $sizes_details);
+                            // Clear cache before updating
+                            clean_post_cache($attachment->ID);
+                            
+                            $metadata_update_result = wp_update_attachment_metadata($attachment->ID, $metadata);
+                            if ($metadata_update_result) {
+                                $log_entry['checks'][] = '🔧 Fixed ' . $sizes_fixed . ' broken image sizes: ' . implode(', ', $sizes_details);
+                                
+                                // Verify the metadata was saved
+                                $saved_metadata = wp_get_attachment_metadata($attachment->ID);
+                                $verified = true;
+                                foreach ($sizes_details as $size_name) {
+                                    if (!isset($saved_metadata['sizes'][$size_name]['cdn_url'])) {
+                                        $verified = false;
+                                        break;
+                                    }
+                                }
+                                if ($verified) {
+                                    $log_entry['checks'][] = '  ✓ Verified - Metadata saved correctly';
+                                } else {
+                                    $log_entry['checks'][] = '  ✗ WARNING - Metadata may not have saved correctly';
+                                }
+                            } else {
+                                $log_entry['checks'][] = '✗ Failed to save metadata for image sizes';
+                            }
                             $fixed_count++;
                             
                             // Add to processed URLs log as a fix
@@ -949,6 +993,9 @@ class Migrator {
             // Check if there are more attachments to process
             $next_offset = $offset + $limit;
             $has_more = ($next_offset < $total_count);
+            
+            // Flush WordPress object cache to ensure all updates are persisted
+            wp_cache_flush();
 
             wp_send_json_success([
                 'message' => sprintf(
