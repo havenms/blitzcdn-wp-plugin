@@ -699,7 +699,8 @@ class Migrator {
                 }
                 
                 // If we still don't have a valid URL but have a file_id from metadata, reconstruct it
-                if (!$needs_update && !empty($file_id)) {
+                // Only reconstruct if we truly have no valid URL (empty cdn_url AND empty/invalid guid)
+                if (!$needs_update && !empty($file_id) && (empty($cdn_url) && empty($post_guid))) {
                     $log_entry['checks'][] = '⚠ No valid URL found, attempting reconstruction from file_id: ' . $file_id;
                     $log_entry['checks'][] = 'Settings available - Endpoint: ' . ($endpoint ?: 'MISSING') . ', Bucket: ' . ($bucket_id ?: 'MISSING') . ', Project: ' . ($project_id ?: 'MISSING');
 
