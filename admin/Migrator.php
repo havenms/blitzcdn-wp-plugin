@@ -39,6 +39,9 @@ class Migrator {
         // WooCommerce reconnection action
         add_action('wp_ajax_blitzcdn_reconnect_woocommerce', [$this, 'ajax_reconnect_woocommerce']);
 
+        // Fix URL structure action
+        add_action('wp_ajax_blitzcdn_fix_url_structure', [$this, 'ajax_fix_url_structure']);
+
         // Zip Migration Actions - delegate to proxy methods to avoid circular dependency
         add_action('wp_ajax_blitzcdn_start_zip_migration', [$this, 'ajax_start_zip_migration_proxy']);
         add_action('wp_ajax_blitzcdn_continue_zip_migration', [$this, 'ajax_continue_zip_migration_proxy']);
@@ -498,6 +501,88 @@ class Migrator {
         } catch (\Exception $e) {
             error_log('BlitzCDN: AJAX reconnect WooCommerce exception: ' . $e->getMessage());
             wp_send_json_error(['message' => 'Exception: ' . $e->getMessage()]);
+        }
+    }
+
+    /**
+     * AJAX handler to fix CDN URL structure (add missing /v1/ path).
+     */
+    public function ajax_fix_url_structure() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(['message' => 'Unauthorized']);
+            return;
+        }
+
+        global $wpdb;
+
+        try {
+            // Get all attachments with BlitzCDN URLs
+            $attachments = $wpdb->get_results(
+                "SELECT p.ID, pm_url.meta_value as cdn_url, pm_guid.meta_value as guid
+                FROM {$wpdb->posts} p
+                INNER JOIN {$wpdb->postmeta} pm_url ON p.ID = pm_url.post_id AND pm_url.meta_key = '_blitzcdn_cdn_url'
+                LEFT JOIN {$wpdb->postmeta} pm_guid ON p.ID = pm_guid.post_id AND pm_guid.meta_key = '_wp_attachment_metadata'
+                WHERE p.post_type = 'attachment'
+                AND pm_url.meta_value != ''"
+            );
+
+            $fixed_count = 0;
+            $already_correct = 0;
+
+            foreach ($attachments as $attachment) {
+                $cdn_url = $attachment->cdn_url;
+                $needs_update = false;
+
+                // Check if URL is missing /v1/ in the path
+                if (preg_match('#/storage/buckets/#', $cdn_url) && !preg_match('#/v1/storage/buckets/#', $cdn_url)) {
+                    // Fix the URL by adding /v1/ before /storage
+                    $fixed_url = preg_replace('#(https?://[^/]+)(/storage/buckets/)#', '$1/v1$2', $cdn_url);
+                    
+                    if ($fixed_url !== $cdn_url) {
+                        // Update _blitzcdn_cdn_url
+                        update_post_meta($attachment->ID, '_blitzcdn_cdn_url', $fixed_url);
+                        
+                        // Update post GUID if it's the same as the old CDN URL
+                        $post = get_post($attachment->ID);
+                        if ($post && $post->guid === $cdn_url) {
+                            $wpdb->update(
+                                $wpdb->posts,
+                                ['guid' => $fixed_url],
+                                ['ID' => $attachment->ID]
+                            );
+                        }
+                        
+                        // Fix image size URLs in metadata
+                        $metadata = wp_get_attachment_metadata($attachment->ID);
+                        if (!empty($metadata['sizes'])) {
+                            foreach ($metadata['sizes'] as $size_name => &$size_data) {
+                                if (!empty($size_data['cdn_url'])) {
+                                    $size_data['cdn_url'] = preg_replace('#(https?://[^/]+)(/storage/buckets/)#', '$1/v1$2', $size_data['cdn_url']);
+                                }
+                            }
+                            wp_update_attachment_metadata($attachment->ID, $metadata);
+                        }
+                        
+                        $fixed_count++;
+                        $needs_update = true;
+                    }
+                } else {
+                    $already_correct++;
+                }
+            }
+
+            wp_send_json_success([
+                'message' => "Fixed {$fixed_count} URLs, {$already_correct} already correct",
+                'fixed' => $fixed_count,
+                'already_correct' => $already_correct,
+                'total' => count($attachments)
+            ]);
+
+        } catch (\Exception $e) {
+            error_log('BlitzCDN: URL fix error: ' . $e->getMessage());
+            wp_send_json_error(['message' => 'Error: ' . $e->getMessage()]);
         }
     }
 }

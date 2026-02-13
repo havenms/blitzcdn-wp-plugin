@@ -1249,8 +1249,8 @@ class EmailRedownloader {
                 $cdn_domain = 'https://' . $cdn_domain;
             }
             
-            // CDN domain still needs full Appwrite path structure
-            return $cdn_domain . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
+            // CDN domain still needs full Appwrite path structure with /v1/ API version
+            return $cdn_domain . '/v1/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
         }
         
         // Fallback to Appwrite endpoint with proper format
@@ -1264,7 +1264,11 @@ class EmailRedownloader {
                 $endpoint = 'https://' . $endpoint;
             }
             
-            return $endpoint . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
+            // Remove any existing /v1 from endpoint and add it back properly
+            $endpoint = rtrim($endpoint, '/');
+            $endpoint = preg_replace('/\/v1$/', '', $endpoint);
+            
+            return $endpoint . '/v1/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
         }
         
         return false;

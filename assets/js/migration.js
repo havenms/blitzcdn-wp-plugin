@@ -2628,5 +2628,64 @@ if (typeof jQuery === "undefined") {
         processBatch(0);
       },
     );
+
+    // Fix CDN URLs button
+    $(document).on("click", "#blitzcdn-fix-urls-btn", function (e) {
+      e.preventDefault();
+
+      var $btn = $(this);
+      var $status = $("#blitzcdn-fix-urls-status");
+      var $error = $("#blitzcdn-fix-urls-error");
+      var $message = $("#blitzcdn-fix-urls-message");
+      var $stats = $("#blitzcdn-fix-urls-stats");
+      var $errorMessage = $("#blitzcdn-fix-urls-error-message");
+
+      // Hide previous results
+      $status.hide();
+      $error.hide();
+
+      // Disable button
+      $btn.prop("disabled", true).text("Fixing URLs...");
+
+      ajaxPost(
+        {
+          action: "blitzcdn_fix_url_structure",
+        },
+        function (response) {
+          $btn.prop("disabled", false).text("Fix CDN URL Structure");
+
+          if (response.success && response.data) {
+            var data = response.data;
+            $message.text(data.message || "URLs fixed successfully");
+
+            var statsHtml = "";
+            statsHtml += "<strong>Fixed:</strong> " + (data.fixed || 0) + "<br>";
+            statsHtml += "<strong>Already correct:</strong> " + (data.already_correct || 0) + "<br>";
+            statsHtml += "<strong>Total:</strong> " + (data.total || 0);
+
+            $stats.html(statsHtml);
+            $status.fadeIn();
+          } else {
+            $errorMessage.text(
+              response.data?.message || "Unknown error occurred",
+            );
+            $error.fadeIn();
+          }
+        },
+        function (xhr, status, error) {
+          $btn.prop("disabled", false).text("Fix CDN URL Structure");
+
+          var errorMsg = "Request failed";
+          if (xhr && xhr.responseJSON && xhr.responseJSON.data) {
+            if (xhr.responseJSON.data.message) {
+              errorMsg = xhr.responseJSON.data.message;
+            }
+          }
+
+          $errorMessage.text(errorMsg);
+          $error.fadeIn();
+        },
+      );
+    });
   });
 }

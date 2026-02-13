@@ -585,6 +585,36 @@ class Settings
             <?php endif; ?>
         </div>
 
+        <!-- Fix CDN URL Structure Section -->
+        <div class="wrap" style="max-width: 1200px; margin-top: 40px; padding: 20px; background: #fff; border: 1px solid #ddd; border-radius: 4px;">
+            <h2>🔧 Fix CDN URL Structure</h2>
+            <p>If your CDN URLs are broken (showing "Route not found" errors), they might be missing the required <code>/v1/</code> API version path.</p>
+            
+            <div style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px; margin: 20px 0; border-radius: 4px;">
+                <p style="margin: 0; color: #333;">
+                    <strong>⚠️ Common Issue:</strong> URLs like <code>/storage/buckets/...</code> should be <code>/v1/storage/buckets/...</code><br>
+                    This tool automatically fixes all CDN URLs in your database to include the proper API version path.
+                </p>
+            </div>
+
+            <p>
+                <button type="button" id="blitzcdn-fix-urls-btn" class="button button-primary"
+                    data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>"
+                    data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">
+                    Fix CDN URL Structure
+                </button>
+            </p>
+
+            <div id="blitzcdn-fix-urls-status" style="margin-top: 15px; display: none; padding: 15px; border-radius: 4px; background: #d1f2eb; border: 1px solid #2e8b57;">
+                <p id="blitzcdn-fix-urls-message" style="margin: 0; color: #2e8b57; font-weight: 500;"></p>
+                <div id="blitzcdn-fix-urls-stats" style="margin-top: 10px; font-size: 14px; color: #2e8b57;"></div>
+            </div>
+
+            <div id="blitzcdn-fix-urls-error" style="margin-top: 15px; display: none; padding: 15px; border-radius: 4px; background: #f8d7da; border: 1px solid #dc3545;">
+                <p id="blitzcdn-fix-urls-error-message" style="margin: 0; color: #dc3545; font-weight: 500;"></p>
+            </div>
+        </div>
+
         <!-- WooCommerce Image Reconnection Section -->
         <div class="wrap" style="max-width: 1200px; margin-top: 40px; padding: 20px; background: #fff; border: 1px solid #ddd; border-radius: 4px;">
             <h2>🛒 Fix WooCommerce Product Images</h2>

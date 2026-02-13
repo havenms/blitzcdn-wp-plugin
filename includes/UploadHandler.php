@@ -291,8 +291,13 @@ class UploadHandler {
             $base_url = $endpoint; // Fallback to direct Appwrite URL
         }
 
-        // Construct path
-        // /storage/buckets/{bucketId}/files/{fileId}/view
+        // Construct path with /v1/ API version
+        // /v1/storage/buckets/{bucketId}/files/{fileId}/view
+        // If base_url already has /v1, don't duplicate it
+        $base_url = rtrim($base_url, '/');
+        if (!preg_match('/\/v1$/', $base_url)) {
+            $base_url .= '/v1';
+        }
         $url = "{$base_url}/storage/buckets/{$bucket_id}/files/{$file_id}/view?project={$project_id}";
         
         return $url;
