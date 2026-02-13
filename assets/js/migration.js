@@ -2540,9 +2540,9 @@ if (typeof jQuery === "undefined") {
                   );
                   
                   // Show URL fixes count if available
-                  if (data.products_with_fixed_urls) {
+                  if (data.attachments_with_fixed_urls) {
                     addLog(
-                      "Products with fixed URLs: " + data.products_with_fixed_urls,
+                      "Attachments with fixed URLs: " + data.attachments_with_fixed_urls,
                       "success",
                     );
                   }
@@ -2570,10 +2570,10 @@ if (typeof jQuery === "undefined") {
                     "<strong>Galleries updated:</strong> " +
                     totalStats.galleries_updated;
                   
-                  if (data.products_with_fixed_urls) {
+                  if (data.attachments_with_fixed_urls) {
                     statsHtml +=
-                      "<br><strong>Products with fixed URLs:</strong> " +
-                      data.products_with_fixed_urls;
+                      "<br><strong>Attachments with fixed URLs:</strong> " +
+                      data.attachments_with_fixed_urls;
                   }
 
                   $stats.html(statsHtml);

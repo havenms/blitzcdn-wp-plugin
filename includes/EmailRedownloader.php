@@ -776,9 +776,9 @@ class EmailRedownloader {
             $result['variations_updated'] = $total_variations_updated;
             $result['galleries_updated'] = $total_galleries_updated;
             
-            // NEW: Also scan and fix broken CDN URLs in product content/metadata
+            // NEW: Scan and fix broken CDN URLs in attachment metadata (image sizes)
             $url_fixes = [];
-            $products_with_broken_urls = 0;
+            $attachments_with_broken_urls = 0;
             
             // Only run URL scanning on first batch to avoid duplication
             if ($offset === 0) {
@@ -792,95 +792,154 @@ class EmailRedownloader {
                 if ($endpoint && $bucket_id && $project_id) {
                     $url_fixes[] = [
                         'type' => 'info',
-                        'message' => 'Scanning WooCommerce products for broken CDN URLs...'
+                        'message' => '🔍 Scanning attachment metadata for broken CDN URLs...'
                     ];
                     
-                    // Find all products with potential broken CDN URLs in content
-                    $products_with_urls = $wpdb->get_results(
-                        "SELECT ID, post_content, post_type 
-                        FROM {$wpdb->posts} 
-                        WHERE post_type IN ('product', 'product_variation')
-                        AND post_content LIKE '%storage/buckets%' 
-                        AND post_status IN ('publish', 'draft', 'pending', 'private')
-                        LIMIT 50"
+                    // Get all attachments that have CDN metadata
+                    $cdn_attachments = $wpdb->get_results(
+                        "SELECT DISTINCT p.ID
+                        FROM {$wpdb->posts} p
+                        INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+                        WHERE p.post_type = 'attachment'
+                        AND p.post_status = 'inherit'
+                        AND pm.meta_key = '_blitzcdn_file_id'
+                        AND pm.meta_value != ''
+                        LIMIT 200"
                     );
                     
-                    foreach ($products_with_urls as $product) {
-                        $original_content = $product->post_content;
-                        $updated_content = $original_content;
-                        $url_changes = 0;
+                    $url_fixes[] = [
+                        'type' => 'info',
+                        'message' => sprintf('Found %d CDN attachments to check', count($cdn_attachments))
+                    ];
+                    
+                    foreach ($cdn_attachments as $attachment) {
+                        $attachment_fixed = false;
+                        $size_fixes = 0;
                         
-                        // Pattern 1: URLs with filenames at the end
-                        $pattern = '#(https?://[^/]+/v1/storage/buckets/[^/]+/files/([a-f0-9]+))/[^/\s"\'\)]+\.(jpg|jpeg|png|gif|webp|svg)#i';
+                        // Get attachment metadata
+                        $metadata = wp_get_attachment_metadata($attachment->ID);
                         
-                        if (preg_match_all($pattern, $original_content, $matches, PREG_SET_ORDER)) {
-                            foreach ($matches as $match) {
-                                $broken_url = $match[0];
-                                $file_id = $match[2];
-                                
-                                $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
-                                $base_url = rtrim($base_url, '/');
-                                if (!preg_match('/^https?:\/\//', $base_url)) {
-                                    $base_url = 'https://' . $base_url;
+                        if (!empty($metadata['sizes'])) {
+                            foreach ($metadata['sizes'] as $size_name => &$size_data) {
+                                if (!empty($size_data['cdn_url'])) {
+                                    $old_url = $size_data['cdn_url'];
+                                    $is_broken = false;
+                                    
+                                    // Check if URL is broken
+                                    if (preg_match('#/storage/buckets/#', $old_url)) {
+                                        // Check for missing /view or project=
+                                        if (!preg_match('#/view(\?|&)#', $old_url) || !preg_match('#project=#', $old_url)) {
+                                            $is_broken = true;
+                                        }
+                                        
+                                        // Check for filename at end
+                                        if (preg_match('#/files/[a-f0-9]+/[^/]+\.(jpg|jpeg|png|gif|webp|svg)#i', $old_url)) {
+                                            $is_broken = true;
+                                        }
+                                    }
+                                    
+                                    if ($is_broken) {
+                                        // Extract file ID
+                                        if (preg_match('#/files/([a-f0-9]+)(?:/|$)#', $old_url, $matches)) {
+                                            $file_id = $matches[1];
+                                            
+                                            // Reconstruct proper URL
+                                            $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                                            $base_url = rtrim($base_url, '/');
+                                            if (!preg_match('/^https?:\/\//', $base_url)) {
+                                                $base_url = 'https://' . $base_url;
+                                            }
+                                            if (!preg_match('/\/v1$/', $base_url)) {
+                                                $base_url .= '/v1';
+                                            }
+                                            
+                                            $new_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
+                                            $size_data['cdn_url'] = $new_url;
+                                            $size_fixes++;
+                                            $attachment_fixed = true;
+                                        }
+                                    }
                                 }
-                                if (!preg_match('/\/v1$/', $base_url)) {
-                                    $base_url .= '/v1';
-                                }
-                                
-                                $correct_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
-                                $updated_content = str_replace($broken_url, $correct_url, $updated_content);
-                                $url_changes++;
                             }
-                        }
-                        
-                        // Pattern 2: URLs missing /view and project=
-                        $pattern2 = '#(https?://[^/]+)/v1/storage/buckets/([^/]+)/files/([a-f0-9]+)(?!/view)([^\s"\'\)]*?)(?=["\s\)])#i';
-                        if (preg_match_all($pattern2, $updated_content, $matches2, PREG_SET_ORDER)) {
-                            foreach ($matches2 as $match) {
-                                $broken_url = $match[0];
-                                $file_id = $match[3];
-                                
-                                $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
-                                $base_url = rtrim($base_url, '/');
-                                if (!preg_match('/^https?:\/\//', $base_url)) {
-                                    $base_url = 'https://' . $base_url;
-                                }
-                                if (!preg_match('/\/v1$/', $base_url)) {
-                                    $base_url .= '/v1';
-                                }
-                                
-                                $correct_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
-                                $updated_content = str_replace($broken_url, $correct_url, $updated_content);
-                                $url_changes++;
-                            }
-                        }
-                        
-                        if ($url_changes > 0 && $updated_content !== $original_content) {
-                            $wpdb->update(
-                                $wpdb->posts,
-                                ['post_content' => $updated_content],
-                                ['ID' => $product->ID],
-                                ['%s'],
-                                ['%d']
-                            );
-                            $products_with_broken_urls++;
                             
-                            $url_fixes[] = [
-                                'type' => 'success',
-                                'message' => sprintf('Fixed %d broken URLs in %s #%d', $url_changes, $product->post_type, $product->ID)
-                            ];
+                            // Save metadata if any sizes were fixed
+                            if ($size_fixes > 0) {
+                                wp_update_attachment_metadata($attachment->ID, $metadata);
+                                clean_post_cache($attachment->ID);
+                                $attachments_with_broken_urls++;
+                                
+                                $url_fixes[] = [
+                                    'type' => 'success',
+                                    'message' => sprintf('✓ Fixed %d broken URLs in attachment #%d (%s)', $size_fixes, $attachment->ID, implode(', ', array_keys($metadata['sizes'])))
+                                ];
+                            }
+                        }
+                        
+                        // Also check main CDN URL
+                        $cdn_url = get_post_meta($attachment->ID, '_blitzcdn_cdn_url', true);
+                        if (!empty($cdn_url)) {
+                            $is_main_broken = false;
+                            
+                            if (preg_match('#/storage/buckets/#', $cdn_url)) {
+                                if (!preg_match('#/view(\?|&)#', $cdn_url) || !preg_match('#project=#', $cdn_url)) {
+                                    $is_main_broken = true;
+                                }
+                                if (preg_match('#/files/[a-f0-9]+/[^/]+\.(jpg|jpeg|png|gif|webp|svg)#i', $cdn_url)) {
+                                    $is_main_broken = true;
+                                }
+                            }
+                            
+                            if ($is_main_broken) {
+                                if (preg_match('#/files/([a-f0-9]+)(?:/|$)#', $cdn_url, $matches)) {
+                                    $file_id = $matches[1];
+                                    
+                                    $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                                    $base_url = rtrim($base_url, '/');
+                                    if (!preg_match('/^https?:\/\//', $base_url)) {
+                                        $base_url = 'https://' . $base_url;
+                                    }
+                                    if (!preg_match('/\/v1$/', $base_url)) {
+                                        $base_url .= '/v1';
+                                    }
+                                    
+                                    $new_cdn_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
+                                    
+                                    update_post_meta($attachment->ID, '_blitzcdn_cdn_url', $new_cdn_url);
+                                    $wpdb->update(
+                                        $wpdb->posts,
+                                        ['guid' => $new_cdn_url],
+                                        ['ID' => $attachment->ID],
+                                        ['%s'],
+                                        ['%d']
+                                    );
+                                    clean_post_cache($attachment->ID);
+                                    
+                                    if (!$attachment_fixed) {
+                                        $attachments_with_broken_urls++;
+                                        $attachment_fixed = true;
+                                    }
+                                    
+                                    $url_fixes[] = [
+                                        'type' => 'success',
+                                        'message' => sprintf('✓ Fixed main URL for attachment #%d', $attachment->ID)
+                                    ];
+                                }
+                            }
                         }
                     }
                     
-                    if ($products_with_broken_urls > 0) {
+                    // Flush cache
+                    wp_cache_flush();
+                    
+                    if ($attachments_with_broken_urls > 0) {
                         $url_fixes[] = [
                             'type' => 'success',
-                            'message' => sprintf('✅ Fixed broken URLs in %d products', $products_with_broken_urls)
+                            'message' => sprintf('✅ Fixed broken URLs in %d attachments', $attachments_with_broken_urls)
                         ];
                     } else {
                         $url_fixes[] = [
                             'type' => 'info',
-                            'message' => '✓ No broken URLs found in product content'
+                            'message' => '✓ No broken URLs found in attachment metadata'
                         ];
                     }
                 } else {
@@ -892,7 +951,7 @@ class EmailRedownloader {
             }
             
             $result['url_fixes'] = $url_fixes;
-            $result['products_with_fixed_urls'] = $products_with_broken_urls;
+            $result['attachments_with_fixed_urls'] = $attachments_with_broken_urls;
             
             // Check if there are more attachments to process
             $next_offset = $offset + $limit;
