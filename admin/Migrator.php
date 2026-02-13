@@ -577,29 +577,67 @@ class Migrator {
                 $new_cdn_url = null;
                 $old_url = $cdn_url ?: $post_guid;
                 $action_type = 'skip';
+                
+                // Create detailed log entry for this attachment
+                $log_entry = [
+                    'id' => $attachment->ID,
+                    'cdn_url' => $cdn_url ?: 'empty',
+                    'post_guid' => $post_guid ?: 'empty',
+                    'file_id' => $file_id ?: 'empty',
+                    'checks' => []
+                ];
 
                 foreach ($urls_to_check as $url) {
-                    if (empty($url)) continue;
+                    if (empty($url)) {
+                        $log_entry['checks'][] = 'URL is empty, skipping';
+                        continue;
+                    }
+                    
+                    $log_entry['checks'][] = 'Checking URL: ' . $url;
 
                     // Check if URL is a CDN URL (has /storage/buckets/)
                     if (preg_match('#/storage/buckets/#', $url)) {
+                        $log_entry['checks'][] = '✓ Contains /storage/buckets/';
                         $is_broken = false;
+                        $reasons = [];
                         
                         // Check 1: Missing /v1/ API version
-                        if (!preg_match('#/v1/storage/buckets/#', $url)) {
+                        $has_v1 = preg_match('#/v1/storage/buckets/#', $url);
+                        if (!$has_v1) {
                             $is_broken = true;
+                            $reasons[] = 'Missing /v1/ API version';
+                            $log_entry['checks'][] = '✗ Missing /v1/ API version';
+                        } else {
+                            $log_entry['checks'][] = '✓ Has /v1/ API version';
                         }
                         
-                        // Check 2: Missing /view endpoint (broken URLs have filenames instead)
-                        // Working URLs should have /view and project= in them
-                        if (!preg_match('#/view(\?|&)#', $url) || !preg_match('#project=#', $url)) {
+                        // Check 2: Missing /view endpoint
+                        $has_view = preg_match('#/view(\?|&)#', $url);
+                        if (!$has_view) {
                             $is_broken = true;
+                            $reasons[] = 'Missing /view endpoint';
+                            $log_entry['checks'][] = '✗ Missing /view endpoint';
+                        } else {
+                            $log_entry['checks'][] = '✓ Has /view endpoint';
+                        }
+                        
+                        // Check 3: Missing project= parameter
+                        $has_project = preg_match('#project=#', $url);
+                        if (!$has_project) {
+                            $is_broken = true;
+                            $reasons[] = 'Missing project= parameter';
+                            $log_entry['checks'][] = '✗ Missing project= parameter';
+                        } else {
+                            $log_entry['checks'][] = '✓ Has project= parameter';
                         }
                         
                         if ($is_broken) {
+                            $log_entry['checks'][] = '⚠ URL is BROKEN: ' . implode(', ', $reasons);
+                            
                             // Extract the file ID from the URL
                             if (preg_match('#/files/([a-f0-9]+)(?:/|$)#', $url, $matches)) {
                                 $extracted_file_id = $matches[1];
+                                $log_entry['checks'][] = 'Extracted file ID: ' . $extracted_file_id;
                                 
                                 // Get Appwrite settings to reconstruct the URL properly
                                 $settings = get_option('blitzcdn_settings', []);
@@ -607,6 +645,10 @@ class Migrator {
                                 $bucket_id = $settings['bucket_id'] ?? '';
                                 $project_id = $settings['project_id'] ?? '';
                                 $cdn_domain = $settings['cdn_domain'] ?? '';
+                                
+                                $log_entry['checks'][] = 'Settings - Endpoint: ' . ($endpoint ?: 'empty');
+                                $log_entry['checks'][] = 'Settings - Bucket: ' . ($bucket_id ?: 'empty');
+                                $log_entry['checks'][] = 'Settings - Project: ' . ($project_id ?: 'empty');
                                 
                                 if ($endpoint && $bucket_id && $project_id) {
                                     $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
@@ -626,15 +668,26 @@ class Migrator {
                                     $new_cdn_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $extracted_file_id . '/view?project=' . $project_id;
                                     $needs_update = true;
                                     $action_type = 'fixed';
+                                    $log_entry['checks'][] = '🔧 Reconstructed URL: ' . $new_cdn_url;
                                     break;
+                                } else {
+                                    $log_entry['checks'][] = '✗ Missing settings to reconstruct URL';
                                 }
+                            } else {
+                                $log_entry['checks'][] = '✗ Could not extract file ID from URL';
                             }
+                        } else {
+                            $log_entry['checks'][] = '✓ URL is valid';
                         }
+                    } else {
+                        $log_entry['checks'][] = '✗ Not a CDN URL (no /storage/buckets/)';
                     }
                 }
-
+                
                 // If we still don't have a valid URL but have a file_id from metadata, reconstruct it
                 if (!$needs_update && !empty($file_id)) {
+                    $log_entry['checks'][] = '⚠ No valid URL found, attempting reconstruction from file_id';
+                    
                     // Get Appwrite settings to reconstruct the URL
                     $settings = get_option('blitzcdn_settings', []);
                     $endpoint = $settings['endpoint'] ?? '';
@@ -660,10 +713,15 @@ class Migrator {
                         $needs_update = true;
                         $action_type = 'reconstructed';
                         $reconstructed_count++;
+                        $log_entry['checks'][] = '🔧 Reconstructed from file_id: ' . $new_cdn_url;
+                    } else {
+                        $log_entry['checks'][] = '✗ Cannot reconstruct - missing settings';
                     }
                 }
 
                 if ($needs_update && $new_cdn_url) {
+                    $log_entry['checks'][] = '💾 Updating database...';
+                    
                     // Update _blitzcdn_cdn_url
                     update_post_meta($attachment->ID, '_blitzcdn_cdn_url', $new_cdn_url);
                     
@@ -677,31 +735,44 @@ class Migrator {
                     // Fix image size URLs in metadata
                     $metadata = wp_get_attachment_metadata($attachment->ID);
                     if (!empty($metadata['sizes'])) {
+                        $sizes_fixed = 0;
                         foreach ($metadata['sizes'] as $size_name => &$size_data) {
                             if (!empty($size_data['cdn_url'])) {
                                 $size_data['cdn_url'] = preg_replace('#(https?://[^/]+)(/storage/buckets/)#', '$1/v1$2', $size_data['cdn_url']);
+                                $sizes_fixed++;
                             }
                         }
                         wp_update_attachment_metadata($attachment->ID, $metadata);
+                        if ($sizes_fixed > 0) {
+                            $log_entry['checks'][] = '✓ Fixed ' . $sizes_fixed . ' image size URLs';
+                        }
                     }
+                    
+                    $log_entry['checks'][] = '✓ Successfully updated';
                     
                     // Add to processed URLs log
                     $processed_urls[] = [
                         'id' => $attachment->ID,
                         'old_url' => $old_url,
                         'new_url' => $new_cdn_url,
-                        'action' => $action_type
+                        'action' => $action_type,
+                        'log' => implode(' | ', $log_entry['checks'])
                     ];
                     
                     $fixed_count++;
                 } else {
                     $already_correct++;
                     
+                    if (empty($urls_to_check)) {
+                        $log_entry['checks'][] = '⚠ No URLs found to check';
+                    }
+                    
                     // Add to log as already correct
                     $processed_urls[] = [
                         'id' => $attachment->ID,
                         'url' => $old_url,
-                        'action' => 'correct'
+                        'action' => 'correct',
+                        'log' => implode(' | ', $log_entry['checks'])
                     ];
                 }
             }

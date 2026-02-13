@@ -2663,20 +2663,27 @@ if (typeof jQuery === "undefined") {
       $progressBar.css("width", "5%");
       $progressText.text("Initializing...");
 
-      function addLog(msg, type) {
+      function addLog(msg, type, skipTimestamp) {
         var color = "#d4d4d4"; // default
         if (type === "success") color = "#4ec9b0";
         else if (type === "error") color = "#f48771";
         else if (type === "warning") color = "#ce9178";
         else if (type === "info") color = "#569cd6";
+        else if (type === "debug") color = "#808080";
 
-        var timestamp = new Date().toLocaleTimeString();
+        var timestamp = skipTimestamp ? "" : "[" + new Date().toLocaleTimeString() + "] ";
+        var fontSize = msg.startsWith("  ") ? "11px" : "12px";
+        var opacity = msg.startsWith("  Debug:") ? "0.7" : "1";
+        
         $log.append(
           '<div style="color:' +
             color +
-            '; margin-bottom: 4px;">[' +
+            '; margin-bottom: 2px; font-size: ' +
+            fontSize +
+            '; opacity: ' +
+            opacity +
+            '; line-height: 1.4;">' +
             timestamp +
-            "] " +
             msg +
             "</div>",
         );
@@ -2710,36 +2717,55 @@ if (typeof jQuery === "undefined") {
               totalStats.already_correct += data.already_correct || 0;
               totalStats.processed += data.processed || 0;
 
-              // Log each processed URL
+              // Log batch header
+              addLog(
+                "━━━ Batch " +
+                  Math.floor(offset / 50 + 1) +
+                  " (Offset: " +
+                  offset +
+                  ") ━━━",
+                "info",
+              );
+
+              // Log each processed URL with detailed information
               if (data.processed_urls && data.processed_urls.length > 0) {
                 data.processed_urls.forEach(function (urlData) {
                   var logMsg = "";
                   var logType = "info";
 
+                  // Main action message
                   if (urlData.action === "fixed") {
-                    logMsg =
-                      "✓ Fixed ID " +
-                      urlData.id +
-                      ": " +
-                      urlData.old_url +
-                      " → " +
-                      urlData.new_url;
+                    logMsg = "🔧 FIXED ID " + urlData.id;
                     logType = "success";
+                    addLog(logMsg, logType);
+                    addLog("  Old: " + urlData.old_url, "debug", true);
+                    addLog("  New: " + urlData.new_url, "success", true);
                   } else if (urlData.action === "reconstructed") {
-                    logMsg =
-                      "🔧 Reconstructed ID " +
-                      urlData.id +
-                      ": " +
-                      urlData.new_url;
+                    logMsg = "🔧 RECONSTRUCTED ID " + urlData.id;
                     logType = "warning";
+                    addLog(logMsg, logType);
+                    addLog("  Old: " + urlData.old_url, "debug", true);
+                    addLog("  New: " + urlData.new_url, "warning", true);
                   } else if (urlData.action === "correct") {
-                    logMsg = "✓ ID " + urlData.id + " already correct";
+                    logMsg = "✓ ID " + urlData.id + " - Already correct";
                     logType = "info";
-                  }
-
-                  if (logMsg) {
+                    addLog(logMsg, logType);
+                    if (urlData.url) {
+                      addLog("  URL: " + urlData.url, "debug", true);
+                    }
+                  } else {
+                    logMsg = "⚠ ID " + urlData.id + " - Skipped";
+                    logType = "warning";
                     addLog(logMsg, logType);
                   }
+
+                  // Add detailed diagnostic log if available
+                  if (urlData.log) {
+                    addLog("  Debug: " + urlData.log, "debug", true);
+                  }
+                  
+                  // Add spacing between entries (skip timestamp for blank line)
+                  addLog("", "info", true);
                 });
               }
 
