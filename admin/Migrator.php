@@ -555,6 +555,7 @@ class Migrator {
             $already_correct = 0;
             $reconstructed_count = 0;
             $sample_urls = [];
+            $processed_urls = []; // Track all processed URLs for real-time logging
 
             foreach ($results as $attachment) {
                 $cdn_url = $attachment->cdn_url;
@@ -574,6 +575,8 @@ class Migrator {
                 $urls_to_check = array_filter([$cdn_url, $post_guid]);
                 $needs_update = false;
                 $new_cdn_url = null;
+                $old_url = $cdn_url ?: $post_guid;
+                $action_type = 'skip';
 
                 foreach ($urls_to_check as $url) {
                     if (empty($url)) continue;
@@ -586,6 +589,7 @@ class Migrator {
                         if ($fixed_url !== $url) {
                             $new_cdn_url = $fixed_url;
                             $needs_update = true;
+                            $action_type = 'fixed';
                             break;
                         }
                     }
@@ -616,6 +620,7 @@ class Migrator {
                         
                         $new_cdn_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
                         $needs_update = true;
+                        $action_type = 'reconstructed';
                         $reconstructed_count++;
                     }
                 }
@@ -642,9 +647,24 @@ class Migrator {
                         wp_update_attachment_metadata($attachment->ID, $metadata);
                     }
                     
+                    // Add to processed URLs log
+                    $processed_urls[] = [
+                        'id' => $attachment->ID,
+                        'old_url' => $old_url,
+                        'new_url' => $new_cdn_url,
+                        'action' => $action_type
+                    ];
+                    
                     $fixed_count++;
                 } else {
                     $already_correct++;
+                    
+                    // Add to log as already correct
+                    $processed_urls[] = [
+                        'id' => $attachment->ID,
+                        'url' => $old_url,
+                        'action' => 'correct'
+                    ];
                 }
             }
 
@@ -667,7 +687,8 @@ class Migrator {
                 'total_attachments' => (int)$total_count,
                 'has_more' => $has_more,
                 'next_offset' => $next_offset,
-                'sample_urls' => $sample_urls
+                'sample_urls' => $sample_urls,
+                'processed_urls' => $processed_urls
             ]);
 
         } catch (\Exception $e) {

@@ -2634,85 +2634,252 @@ if (typeof jQuery === "undefined") {
       e.preventDefault();
 
       var $btn = $(this);
+      var $progress = $("#blitzcdn-fix-urls-progress");
+      var $progressBar = $("#blitzcdn-fix-urls-progress-bar");
+      var $progressText = $("#blitzcdn-fix-urls-progress-text");
+      var $log = $("#blitzcdn-fix-urls-log");
       var $status = $("#blitzcdn-fix-urls-status");
       var $error = $("#blitzcdn-fix-urls-error");
       var $message = $("#blitzcdn-fix-urls-message");
       var $stats = $("#blitzcdn-fix-urls-stats");
       var $errorMessage = $("#blitzcdn-fix-urls-error-message");
 
+      // Accumulated statistics across all batches
+      var totalStats = {
+        fixed: 0,
+        reconstructed: 0,
+        already_correct: 0,
+        processed: 0,
+        total_attachments: 0,
+      };
+
       // Hide previous results
       $status.hide();
       $error.hide();
+      $log.empty();
+
+      // Show progress
+      $progress.show();
+      $progressBar.css("width", "5%");
+      $progressText.text("Initializing...");
+
+      function addLog(msg, type) {
+        var color = "#d4d4d4"; // default
+        if (type === "success") color = "#4ec9b0";
+        else if (type === "error") color = "#f48771";
+        else if (type === "warning") color = "#ce9178";
+        else if (type === "info") color = "#569cd6";
+
+        var timestamp = new Date().toLocaleTimeString();
+        $log.append(
+          '<div style="color:' +
+            color +
+            '; margin-bottom: 4px;">[' +
+            timestamp +
+            "] " +
+            msg +
+            "</div>",
+        );
+        $log.scrollTop($log[0].scrollHeight);
+      }
+
+      function processBatch(offset) {
+        ajaxPost(
+          {
+            action: "blitzcdn_fix_url_structure",
+            offset: offset,
+          },
+          function (response) {
+            if (response.success && response.data) {
+              var data = response.data;
+
+              // Update total attachments count on first batch
+              if (offset === 0 && data.total_attachments) {
+                totalStats.total_attachments = data.total_attachments;
+                addLog(
+                  "Found " +
+                    data.total_attachments +
+                    " CDN attachments to process",
+                  "info",
+                );
+              }
+
+              // Accumulate statistics
+              totalStats.fixed += data.fixed || 0;
+              totalStats.reconstructed += data.reconstructed || 0;
+              totalStats.already_correct += data.already_correct || 0;
+              totalStats.processed += data.processed || 0;
+
+              // Log each processed URL
+              if (data.processed_urls && data.processed_urls.length > 0) {
+                data.processed_urls.forEach(function (urlData) {
+                  var logMsg = "";
+                  var logType = "info";
+
+                  if (urlData.action === "fixed") {
+                    logMsg =
+                      "✓ Fixed ID " +
+                      urlData.id +
+                      ": " +
+                      urlData.old_url +
+                      " → " +
+                      urlData.new_url;
+                    logType = "success";
+                  } else if (urlData.action === "reconstructed") {
+                    logMsg =
+                      "🔧 Reconstructed ID " +
+                      urlData.id +
+                      ": " +
+                      urlData.new_url;
+                    logType = "warning";
+                  } else if (urlData.action === "correct") {
+                    logMsg = "✓ ID " + urlData.id + " already correct";
+                    logType = "info";
+                  }
+
+                  if (logMsg) {
+                    addLog(logMsg, logType);
+                  }
+                });
+              }
+
+              // Calculate and update progress
+              var progressPercent = 10;
+              if (totalStats.total_attachments > 0) {
+                progressPercent =
+                  10 +
+                  Math.floor(
+                    (totalStats.processed / totalStats.total_attachments) * 90,
+                  );
+              }
+              $progressBar.css("width", progressPercent + "%");
+              $progressText.text(
+                "Processed " +
+                  totalStats.processed +
+                  " of " +
+                  totalStats.total_attachments +
+                  " attachments...",
+              );
+
+              // Check if there are more batches to process
+              if (data.has_more) {
+                // Continue with next batch
+                processBatch(data.next_offset);
+              } else {
+                // All batches complete
+                $progressBar.css("width", "100%");
+                $progressText.text("Complete!");
+
+                addLog("─────────────────────────────", "info");
+                addLog("✓ All batches complete!", "success");
+                addLog(
+                  "Total processed: " + totalStats.processed,
+                  "info",
+                );
+                addLog(
+                  "Fixed: " + totalStats.fixed +
+                  " (Reconstructed: " + totalStats.reconstructed + ")",
+                  "success",
+                );
+                addLog(
+                  "Already correct: " + totalStats.already_correct,
+                  "info",
+                );
+
+                $message.text(
+                  "Processing complete - fixed " +
+                    totalStats.fixed +
+                    " URLs (" +
+                    totalStats.reconstructed +
+                    " reconstructed)",
+                );
+
+                var statsHtml = "";
+                statsHtml +=
+                  "<strong>Total processed:</strong> " +
+                  totalStats.processed +
+                  "<br>";
+                statsHtml +=
+                  "<strong>Fixed:</strong> " + totalStats.fixed + "<br>";
+                statsHtml +=
+                  "<strong>Reconstructed:</strong> " +
+                  totalStats.reconstructed +
+                  "<br>";
+                statsHtml +=
+                  "<strong>Already correct:</strong> " +
+                  totalStats.already_correct;
+
+                $stats.html(statsHtml);
+                $status.fadeIn();
+
+                setTimeout(function () {
+                  $btn.prop("disabled", false).text("Fix CDN URL Structure");
+                }, 1000);
+              }
+            } else {
+              addLog(
+                "✗ Error: " +
+                  (response.data?.message || "Unknown error occurred"),
+                "error",
+              );
+              $errorMessage.text(
+                response.data?.message || "Unknown error occurred",
+              );
+              $error.fadeIn();
+              $btn.prop("disabled", false).text("Fix CDN URL Structure");
+            }
+          },
+          function (xhr, status, error) {
+            $progressBar.css("width", "100%");
+            $progressText.text("Failed!");
+
+            var errorMsg = "Request failed";
+
+            // Try to get detailed error message
+            if (xhr && xhr.responseJSON && xhr.responseJSON.data) {
+              if (xhr.responseJSON.data.message) {
+                errorMsg = xhr.responseJSON.data.message;
+              } else if (typeof xhr.responseJSON.data === "string") {
+                errorMsg = xhr.responseJSON.data;
+              }
+            } else if (xhr && xhr.responseText) {
+              // Try to parse responseText
+              try {
+                var parsed = JSON.parse(xhr.responseText);
+                if (parsed.data && parsed.data.message) {
+                  errorMsg = parsed.data.message;
+                }
+              } catch (e) {
+                // If not JSON, might be a PHP error
+                if (xhr.responseText.length < 500) {
+                  errorMsg = xhr.responseText;
+                } else {
+                  errorMsg = "Server error occurred (check PHP error log)";
+                }
+              }
+            } else if (status) {
+              errorMsg = "Request failed: " + status;
+            }
+
+            addLog("✗ " + errorMsg, "error");
+            console.error("URL fix error:", xhr, status, error);
+
+            $errorMessage.text(errorMsg);
+            $error.fadeIn();
+            $btn.prop("disabled", false).text("Fix CDN URL Structure");
+          },
+        );
+      }
 
       // Disable button
-      $btn.prop("disabled", true).text("Fixing URLs...");
+      $btn.prop("disabled", true).text("Processing...");
 
-      ajaxPost(
-        {
-          action: "blitzcdn_fix_url_structure",
-        },
-        function (response) {
-          $btn.prop("disabled", false).text("Fix CDN URL Structure");
+      addLog("Starting CDN URL structure fix...", "info");
+      $progressBar.css("width", "10%");
+      $progressText.text("Scanning attachments...");
 
-          if (response.success && response.data) {
-            var data = response.data;
-            $message.text(data.message || "URLs fixed successfully");
-
-            var statsHtml = "";
-            statsHtml +=
-              "<strong>Fixed:</strong> " + (data.fixed || 0) + "<br>";
-            if (data.reconstructed) {
-              statsHtml +=
-                "<strong>Reconstructed:</strong> " +
-                data.reconstructed +
-                "<br>";
-            }
-            statsHtml +=
-              "<strong>Already correct:</strong> " +
-              (data.already_correct || 0) +
-              "<br>";
-            statsHtml += "<strong>Total:</strong> " + (data.total || 0);
-
-            // Show sample URLs for debugging
-            if (data.sample_urls && data.sample_urls.length > 0) {
-              statsHtml += "<br><br><strong>Sample URLs found:</strong><br>";
-              data.sample_urls.forEach(function (item) {
-                statsHtml +=
-                  "<small>ID " +
-                  item.id +
-                  ":<br>CDN: " +
-                  (item.cdn_url || "none") +
-                  "<br>GUID: " +
-                  (item.guid || "none") +
-                  "<br>File ID: " +
-                  (item.file_id || "none") +
-                  "<br><br></small>";
-              });
-            }
-
-            $stats.html(statsHtml);
-            $status.fadeIn();
-          } else {
-            $errorMessage.text(
-              response.data?.message || "Unknown error occurred",
-            );
-            $error.fadeIn();
-          }
-        },
-        function (xhr, status, error) {
-          $btn.prop("disabled", false).text("Fix CDN URL Structure");
-
-          var errorMsg = "Request failed";
-          if (xhr && xhr.responseJSON && xhr.responseJSON.data) {
-            if (xhr.responseJSON.data.message) {
-              errorMsg = xhr.responseJSON.data.message;
-            }
-          }
-
-          $errorMessage.text(errorMsg);
-          $error.fadeIn();
-        },
-      );
+      // Start processing from offset 0
+      processBatch(0);
     });
   });
 }
