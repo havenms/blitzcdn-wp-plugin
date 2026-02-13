@@ -2608,18 +2608,11 @@ if (typeof jQuery === "undefined") {
               }
 
               addLog("✗ " + errorMsg, "error");
-              console.error(
-                "WooCommerce reconnect error:",
-                xhr,
-                status,
-                error,
-              );
+              console.error("WooCommerce reconnect error:", xhr, status, error);
 
               $errorMessage.text(errorMsg);
               $error.fadeIn();
-              $btn
-                .prop("disabled", false)
-                .text("Reconnect WooCommerce Images");
+              $btn.prop("disabled", false).text("Reconnect WooCommerce Images");
             },
           );
         }
@@ -2633,29 +2626,6 @@ if (typeof jQuery === "undefined") {
 
         // Start processing from offset 0
         processBatch(0);
-      },
-    );
-                }
-              } catch (e) {
-                // If not JSON, might be a PHP error
-                if (xhr.responseText.length < 500) {
-                  errorMsg = xhr.responseText;
-                } else {
-                  errorMsg = "Server error occurred (check PHP error log)";
-                }
-              }
-            } else if (status) {
-              errorMsg = "Request failed: " + status;
-            }
-
-            addLog("✗ " + errorMsg, "error");
-            console.error("WooCommerce reconnect error:", xhr, status, error);
-
-            $errorMessage.text(errorMsg);
-            $error.fadeIn();
-            $btn.prop("disabled", false).text("Reconnect WooCommerce Images");
-          },
-        );
       },
     );
   });
