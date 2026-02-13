@@ -991,6 +991,114 @@ class Migrator {
                 }
             }
 
+            // After fixing attachment metadata, also fix URLs embedded in post content
+            // This handles URLs hardcoded in WooCommerce products, pages, posts, etc.
+            $content_fixes = 0;
+            if ($offset === 0 && $endpoint && $bucket_id && $project_id) {
+                // Only run this on the first batch to avoid duplicating work
+                $processed_urls[] = [
+                    'id' => 'content',
+                    'action' => 'info',
+                    'log' => '🔍 Scanning post content for broken URLs...'
+                ];
+                
+                // Find all posts with potential broken CDN URLs in content
+                $posts_with_cdn_urls = $wpdb->get_results(
+                    "SELECT ID, post_content, post_type 
+                    FROM {$wpdb->posts} 
+                    WHERE post_content LIKE '%storage/buckets%' 
+                    AND post_status = 'publish'
+                    LIMIT 100"
+                );
+                
+                foreach ($posts_with_cdn_urls as $post) {
+                    $original_content = $post->post_content;
+                    $updated_content = $original_content;
+                    $post_changes = 0;
+                    
+                    // Pattern to match broken CDN URLs with filenames
+                    // Matches: /v1/storage/buckets/{bucket}/files/{file_id}/filename.jpg
+                    // Should be: /v1/storage/buckets/{bucket}/files/{file_id}/view?project={project}
+                    $pattern = '#(https?://[^/]+/v1/storage/buckets/[^/]+/files/([a-f0-9]+))/[^/\s"\'\)]+\.(jpg|jpeg|png|gif|webp|svg)#i';
+                    
+                    if (preg_match_all($pattern, $original_content, $matches, PREG_SET_ORDER)) {
+                        foreach ($matches as $match) {
+                            $broken_url = $match[0];
+                            $base_path = $match[1];
+                            $file_id = $match[2];
+                            
+                            // Construct proper URL
+                            $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                            $base_url = rtrim($base_url, '/');
+                            if (!preg_match('/^https?:\/\//', $base_url)) {
+                                $base_url = 'https://' . $base_url;
+                            }
+                            if (!preg_match('/\/v1$/', $base_url)) {
+                                $base_url .= '/v1';
+                            }
+                            
+                            $correct_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
+                            $updated_content = str_replace($broken_url, $correct_url, $updated_content);
+                            $post_changes++;
+                        }
+                    }
+                    
+                    // Also fix URLs missing /view and project= but not necessarily with filenames
+                    $pattern2 = '#(https?://[^/]+)/v1/storage/buckets/([^/]+)/files/([a-f0-9]+)(?!/view)([^\s"\'\)]*?)(?=["\s\)])#i';
+                    if (preg_match_all($pattern2, $updated_content, $matches2, PREG_SET_ORDER)) {
+                        foreach ($matches2 as $match) {
+                            $broken_url = $match[0];
+                            $file_id = $match[3];
+                            
+                            // Construct proper URL
+                            $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                            $base_url = rtrim($base_url, '/');
+                            if (!preg_match('/^https?:\/\//', $base_url)) {
+                                $base_url = 'https://' . $base_url;
+                            }
+                            if (!preg_match('/\/v1$/', $base_url)) {
+                                $base_url .= '/v1';
+                            }
+                            
+                            $correct_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
+                            $updated_content = str_replace($broken_url, $correct_url, $updated_content);
+                            $post_changes++;
+                        }
+                    }
+                    
+                    if ($post_changes > 0 && $updated_content !== $original_content) {
+                        $wpdb->update(
+                            $wpdb->posts,
+                            ['post_content' => $updated_content],
+                            ['ID' => $post->ID],
+                            ['%s'],
+                            ['%d']
+                        );
+                        $content_fixes++;
+                        
+                        $processed_urls[] = [
+                            'id' => $post->ID,
+                            'action' => 'content_fixed',
+                            'log' => '✓ Fixed ' . $post_changes . ' URLs in ' . $post->post_type . ' #' . $post->ID
+                        ];
+                    }
+                }
+                
+                if ($content_fixes > 0) {
+                    $processed_urls[] = [
+                        'id' => 'content_summary',
+                        'action' => 'success',
+                        'log' => '✅ Fixed URLs in ' . $content_fixes . ' posts/products'
+                    ];
+                } else {
+                    $processed_urls[] = [
+                        'id' => 'content_summary',
+                        'action' => 'info',
+                        'log' => '✓ No broken URLs found in post content'
+                    ];
+                }
+            }
+            
             // Check if there are more attachments to process
             $next_offset = $offset + $limit;
             $has_more = ($next_offset < $total_count);
