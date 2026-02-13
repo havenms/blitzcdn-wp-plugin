@@ -19,9 +19,19 @@ class EmailRedownloader {
 
     private $appwrite_client;
     private static $is_redownloading = false;
+    private $rewrite_urls = true; // Enable URL rewriting by default
 
     public function __construct(AppwriteClient $client) {
         $this->appwrite_client = $client;
+    }
+
+    /**
+     * Enable or disable URL rewriting during linking.
+     *
+     * @param bool $enabled Whether to rewrite URLs in content
+     */
+    public function set_url_rewriting($enabled) {
+        $this->rewrite_urls = (bool) $enabled;
     }
 
     /**
@@ -628,20 +638,26 @@ class EmailRedownloader {
         $file_name = $file_meta['name'] ?? 'unknown';
         $result['file_name'] = $file_name;
 
-        // Check if file already has BlitzCDN metadata (already linked to CDN)
-        $existing_attachment = $this->find_attachment_by_file_id($file_id);
-        if ($existing_attachment) {
-            $result['status'] = 'skipped';
-            $result['message'] = 'File already linked to CDN';
-            $result['attachment_id'] = $existing_attachment;
-            return $result;
-        }
-
-        // Get CDN URL
+        // Get CDN URL early (needed for both new and existing attachments)
         $cdn_url = $this->get_cdn_url_for_file($file_id);
         
         if (!$cdn_url) {
             $result['message'] = 'Failed to generate CDN URL';
+            return $result;
+        }
+
+        // Check if file already has BlitzCDN metadata (already linked to CDN)
+        $existing_attachment = $this->find_attachment_by_file_id($file_id);
+        if ($existing_attachment) {
+            // Even though file is already linked, still rewrite URLs in content
+            // (in case old local URLs still exist in posts/pages)
+            if ($this->rewrite_urls) {
+                $this->rewrite_file_urls_in_content($file_name, $cdn_url);
+            }
+            
+            $result['status'] = 'skipped';
+            $result['message'] = 'File already linked to CDN (URLs rewritten)';
+            $result['attachment_id'] = $existing_attachment;
             return $result;
         }
 
@@ -653,6 +669,11 @@ class EmailRedownloader {
             $updated = $this->convert_local_to_cdn_attachment($local_attachment, $file_id, $cdn_url);
             
             if ($updated) {
+                // Rewrite URLs in content after successful conversion
+                if ($this->rewrite_urls) {
+                    $this->rewrite_file_urls_in_content($file_name, $cdn_url);
+                }
+                
                 $result['attachment_id'] = $local_attachment;
                 $result['status'] = 'success';
                 $result['message'] = 'Local file updated to use CDN link';
@@ -667,6 +688,11 @@ class EmailRedownloader {
         $attachment_id = $this->create_virtual_attachment($file_id, $file_name, $cdn_url);
         
         if ($attachment_id) {
+            // Rewrite URLs in content after successful creation
+            if ($this->rewrite_urls) {
+                $this->rewrite_file_urls_in_content($file_name, $cdn_url);
+            }
+            
             $result['attachment_id'] = $attachment_id;
             $result['status'] = 'success';
             $result['message'] = 'WordPress attachment created (linked to CDN)';
@@ -797,4 +823,212 @@ class EmailRedownloader {
 
         return $results;
     }
+
+    /**
+     * Rewrite URLs in post content to use CDN URL for a specific filename.
+     * Searches for any URL containing the filename and replaces it with the CDN URL.
+     *
+     * @param string $filename The filename to search for (e.g., "image.jpg")
+     * @param string $cdn_url  The CDN URL to replace with
+     * @return array {
+     *     @type int $posts_updated Number of posts updated
+     *     @type int $replacements_made Total number of URL replacements made
+     * }
+     */
+    private function rewrite_file_urls_in_content($filename, $cdn_url) {
+        global $wpdb;
+        
+        $posts_updated = 0;
+        $replacements_made = 0;
+        
+        if (empty($filename) || empty($cdn_url)) {
+            return [
+                'posts_updated' => 0,
+                'replacements_made' => 0
+            ];
+        }
+        
+        // Get all post types that can contain content
+        $post_types = get_post_types(['public' => true], 'names');
+        $post_types[] = 'attachment'; // Also check attachment descriptions
+        $post_types_placeholders = implode(',', array_fill(0, count($post_types), '%s'));
+        
+        // Build the query to find posts containing the filename
+        $query = "SELECT ID, post_content FROM {$wpdb->posts} 
+            WHERE post_type IN ({$post_types_placeholders}) 
+            AND post_content LIKE %s";
+        
+        $query_params = array_merge($post_types, ['%' . $wpdb->esc_like($filename) . '%']);
+        $posts = $wpdb->get_results($wpdb->prepare($query, $query_params));
+        
+        // Prepare CDN URL variants (http and https)
+        $cdn_url_https = preg_replace('/^http:/', 'https:', $cdn_url);
+        $cdn_url_http = preg_replace('/^https:/', 'http:', $cdn_url);
+        
+        foreach ($posts as $post) {
+            $original_content = $post->post_content;
+            $updated_content = $original_content;
+            $post_replacements = 0;
+            
+            // Use regex to find and replace URLs containing the filename
+            // Pattern matches URLs in various formats: src="...", href="...", url(...), plain URLs
+            
+            // Pattern 1: Find URLs in attributes (src, href, data-src, etc.)
+            $pattern1 = '/((?:src|href|data-src|data-href|data-lazy-src|poster)=["\'])(https?:\/\/[^"\']*' . preg_quote($filename, '/') . '[^"\']*)(["\'])/i';
+            $updated_content = preg_replace_callback($pattern1, function($matches) use ($cdn_url_https, $cdn_url_http, &$post_replacements) {
+                $post_replacements++;
+                $protocol_prefix = (strpos($matches[2], 'https://') === 0) ? $cdn_url_https : $cdn_url_http;
+                return $matches[1] . $protocol_prefix . $matches[3];
+            }, $updated_content);
+            
+            // Pattern 2: Find URLs in CSS url() declarations
+            $pattern2 = '/(url\(["\']?)(https?:\/\/[^)"\']*)(' . preg_quote($filename, '/') . '[^)"\']*)(["\']?\))/i';
+            $updated_content = preg_replace_callback($pattern2, function($matches) use ($cdn_url_https, $cdn_url_http, &$post_replacements) {
+                $post_replacements++;
+                $protocol_prefix = (strpos($matches[2], 'https://') === 0) ? $cdn_url_https : $cdn_url_http;
+                return $matches[1] . $protocol_prefix . $matches[4];
+            }, $updated_content);
+            
+            // Pattern 3: Find plain URLs in text/JSON (for Gutenberg blocks)
+            $pattern3 = '/(https?:\/\/[^\s"\'<>,]*' . preg_quote($filename, '/') . '[^\s"\'<>,]*)/i';
+            $updated_content = preg_replace_callback($pattern3, function($matches) use ($cdn_url_https, $cdn_url_http, &$post_replacements) {
+                // Don't double-replace if already CDN URL
+                if (strpos($matches[1], $cdn_url_https) !== false || strpos($matches[1], $cdn_url_http) !== false) {
+                    return $matches[1];
+                }
+                $post_replacements++;
+                return (strpos($matches[1], 'https://') === 0) ? $cdn_url_https : $cdn_url_http;
+            }, $updated_content);
+            
+            // Pattern 4: Handle JSON-encoded URLs (Gutenberg blocks store escaped URLs)
+            $pattern4 = '/(https?:\\\\\/\\\\\/[^\s"\'<>,\\\\]*' . preg_quote($filename, '/') . '[^\s"\'<>,\\\\]*)/i';
+            $cdn_url_json = addslashes($cdn_url_https);
+            $updated_content = preg_replace_callback($pattern4, function($matches) use ($cdn_url_json, &$post_replacements) {
+                $post_replacements++;
+                return $cdn_url_json;
+            }, $updated_content);
+            
+            // Only update if content changed
+            if ($updated_content !== $original_content) {
+                $wpdb->update(
+                    $wpdb->posts,
+                    ['post_content' => $updated_content],
+                    ['ID' => $post->ID],
+                    ['%s'],
+                    ['%d']
+                );
+                
+                // Clear post cache
+                clean_post_cache($post->ID);
+                
+                $posts_updated++;
+                $replacements_made += $post_replacements;
+            }
+        }
+        
+        // Also check postmeta for URLs (some plugins/page builders store URLs in meta)
+        $meta_results = $wpdb->get_results($wpdb->prepare(
+            "SELECT post_id, meta_id, meta_key, meta_value FROM {$wpdb->postmeta} 
+            WHERE meta_value LIKE %s",
+            '%' . $wpdb->esc_like($filename) . '%'
+        ));
+        
+        foreach ($meta_results as $meta) {
+            $original_value = $meta->meta_value;
+            $updated_value = $original_value;
+            
+            // Try to detect if this is serialized data
+            if (is_serialized($original_value)) {
+                $unserialized = @unserialize($original_value);
+                if ($unserialized !== false) {
+                    // Recursively replace URLs in serialized data
+                    $updated_unserialized = $this->replace_urls_in_array($unserialized, $filename, $cdn_url_https);
+                    if ($updated_unserialized !== $unserialized) {
+                        $updated_value = serialize($updated_unserialized);
+                    }
+                }
+            } elseif ($this->is_json($original_value)) {
+                // Handle JSON data
+                $json_data = json_decode($original_value, true);
+                if ($json_data !== null) {
+                    $updated_json = $this->replace_urls_in_array($json_data, $filename, $cdn_url_https);
+                    if ($updated_json !== $json_data) {
+                        $updated_value = wp_json_encode($updated_json);
+                    }
+                }
+            } else {
+                // Plain text - use regex replacement
+                $pattern = '/(https?:\/\/[^\s"\'<>,]*' . preg_quote($filename, '/') . '[^\s"\'<>,]*)/i';
+                $updated_value = preg_replace_callback($pattern, function($matches) use ($cdn_url_https, $cdn_url_http) {
+                    if (strpos($matches[1], $cdn_url_https) !== false || strpos($matches[1], $cdn_url_http) !== false) {
+                        return $matches[1];
+                    }
+                    return (strpos($matches[1], 'https://') === 0) ? $cdn_url_https : $cdn_url_http;
+                }, $updated_value);
+            }
+            
+            // Only update if value changed
+            if ($updated_value !== $original_value) {
+                $wpdb->update(
+                    $wpdb->postmeta,
+                    ['meta_value' => $updated_value],
+                    ['meta_id' => $meta->meta_id],
+                    ['%s'],
+                    ['%d']
+                );
+                
+                // Clear post meta cache
+                wp_cache_delete($meta->post_id, 'post_meta');
+            }
+        }
+        
+        return [
+            'posts_updated' => $posts_updated,
+            'replacements_made' => $replacements_made
+        ];
+    }
+
+    /**
+     * Recursively replace URLs in arrays (for serialized/JSON data).
+     *
+     * @param mixed  $data     The data to process (array, string, or other)
+     * @param string $filename The filename to search for
+     * @param string $cdn_url  The CDN URL to replace with
+     * @return mixed The processed data
+     */
+    private function replace_urls_in_array($data, $filename, $cdn_url) {
+        if (is_array($data)) {
+            foreach ($data as $key => $value) {
+                $data[$key] = $this->replace_urls_in_array($value, $filename, $cdn_url);
+            }
+        } elseif (is_string($data) && strpos($data, $filename) !== false) {
+            $cdn_url_https = preg_replace('/^http:/', 'https:', $cdn_url);
+            $cdn_url_http = preg_replace('/^https:/', 'http:', $cdn_url);
+            
+            $pattern = '/(https?:\/\/[^\s"\'<>,]*' . preg_quote($filename, '/') . '[^\s"\'<>,]*)/i';
+            $data = preg_replace_callback($pattern, function($matches) use ($cdn_url_https, $cdn_url_http) {
+                if (strpos($matches[1], $cdn_url_https) !== false || strpos($matches[1], $cdn_url_http) !== false) {
+                    return $matches[1];
+                }
+                return (strpos($matches[1], 'https://') === 0) ? $cdn_url_https : $cdn_url_http;
+            }, $data);
+        }
+        
+        return $data;
+    }
+
+    /**
+     * Check if a string is valid JSON.
+     *
+     * @param string $string The string to check
+     * @return bool True if valid JSON, false otherwise
+     */
+    private function is_json($string) {
+        if (!is_string($string)) {
+            return false;
+        }
+        json_decode($string);
+        return (json_last_error() === JSON_ERROR_NONE);
+    }
 }
+
