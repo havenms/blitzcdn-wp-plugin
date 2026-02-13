@@ -1959,6 +1959,23 @@ if (typeof jQuery === "undefined") {
       }
 
       var mode = $('input[name="blitzcdn-email-mode"]:checked').val();
+
+      // Handle background mode separately
+      if (mode === "link-background") {
+        if (
+          confirm(
+            "Start background linking for " +
+              emailTotalFiles +
+              " file(s)?\n\n" +
+              "This will run in the background using WP-Cron. You can close your browser and check back later.",
+          )
+        ) {
+          startBackgroundLinking(email);
+        }
+        return;
+      }
+
+      // Browser-based processing
       var modeText = mode === "link" ? "linking" : "downloading";
       var actionText = mode === "link" ? "Link" : "Download";
 
@@ -2177,5 +2194,185 @@ if (typeof jQuery === "undefined") {
         logContainer.scrollTop = logContainer.scrollHeight;
       }
     }
+
+    // ===============================
+    // Background Email Linking (WP-Cron)
+    // ===============================
+
+    var backgroundLinkingStatusInterval = null;
+
+    // Check for existing background linking on page load
+    checkBackgroundLinkStatus();
+
+    function checkBackgroundLinkStatus() {
+      ajaxPost(
+        {
+          action: "blitzcdn_get_background_link_status",
+        },
+        function (response) {
+          if (response.success && response.data) {
+            updateBackgroundLinkUI(response.data);
+          }
+        },
+        function (error) {
+          console.error("Failed to check background link status:", error);
+        },
+      );
+    }
+
+    function updateBackgroundLinkUI(status) {
+      if (status.status === "running") {
+        // Show the status section
+        $("#blitzcdn-background-link-status").show();
+        $("#blitzcdn-bg-link-status-text").text("Running");
+        $("#blitzcdn-bg-link-email").text(status.email || "-");
+
+        // Update counters
+        $("#blitzcdn-bg-link-processed").text(status.processed || 0);
+        $("#blitzcdn-bg-link-successful").text(status.successful || 0);
+        $("#blitzcdn-bg-link-skipped").text(status.skipped || 0);
+        $("#blitzcdn-bg-link-failed").text(status.failed || 0);
+
+        // Update progress bar
+        var percentage = status.percentage || 0;
+        $("#blitzcdn-bg-link-progress-bar").css("width", percentage + "%");
+        $("#blitzcdn-bg-link-progress-text").text(
+          status.processed +
+            " / " +
+            status.total +
+            " (" +
+            percentage.toFixed(1) +
+            "%)",
+        );
+
+        // Start polling if not already polling
+        if (!backgroundLinkingStatusInterval) {
+          backgroundLinkingStatusInterval = setInterval(function () {
+            checkBackgroundLinkStatus();
+          }, 3000); // Poll every 3 seconds
+        }
+      } else if (status.status === "completed") {
+        $("#blitzcdn-background-link-status").show();
+        $("#blitzcdn-bg-link-status-text")
+          .text("Completed ✓")
+          .css("color", "#155724");
+
+        // Update final counts
+        $("#blitzcdn-bg-link-processed").text(status.processed || 0);
+        $("#blitzcdn-bg-link-successful").text(status.successful || 0);
+        $("#blitzcdn-bg-link-skipped").text(status.skipped || 0);
+        $("#blitzcdn-bg-link-failed").text(status.failed || 0);
+
+        // Set progress to 100%
+        $("#blitzcdn-bg-link-progress-bar").css("width", "100%");
+        $("#blitzcdn-bg-link-progress-text").text("100% Complete");
+
+        // Stop polling
+        if (backgroundLinkingStatusInterval) {
+          clearInterval(backgroundLinkingStatusInterval);
+          backgroundLinkingStatusInterval = null;
+        }
+      } else if (status.status === "stopped") {
+        $("#blitzcdn-background-link-status").show();
+        $("#blitzcdn-bg-link-status-text")
+          .text("Stopped")
+          .css("color", "#856404");
+
+        // Stop polling
+        if (backgroundLinkingStatusInterval) {
+          clearInterval(backgroundLinkingStatusInterval);
+          backgroundLinkingStatusInterval = null;
+        }
+      } else {
+        // Idle or unknown status
+        $("#blitzcdn-background-link-status").hide();
+
+        // Stop polling
+        if (backgroundLinkingStatusInterval) {
+          clearInterval(backgroundLinkingStatusInterval);
+          backgroundLinkingStatusInterval = null;
+        }
+      }
+    }
+
+    function startBackgroundLinking(email) {
+      ajaxPost(
+        {
+          action: "blitzcdn_start_background_link",
+          email: email,
+        },
+        function (response) {
+          if (response.success) {
+            alert(
+              "Background linking started! Check the status section below.",
+            );
+
+            // Hide the email stats and show background status
+            $("#blitzcdn-email-stats").hide();
+            $("#blitzcdn-email-redownload-btn").hide();
+            $("#blitzcdn-background-link-status").show();
+            $("#blitzcdn-bg-link-email").text(email);
+            $("#blitzcdn-bg-link-status-text").text("Running");
+
+            // Start polling for status
+            if (!backgroundLinkingStatusInterval) {
+              backgroundLinkingStatusInterval = setInterval(function () {
+                checkBackgroundLinkStatus();
+              }, 3000);
+            }
+          } else {
+            alert(
+              "Failed to start background linking: " +
+                (response.data || "Unknown error"),
+            );
+          }
+        },
+        function (error) {
+          alert(
+            "Error starting background linking: " +
+              (error.message || "Unknown error"),
+          );
+        },
+      );
+    }
+
+    // Stop background linking
+    $(document).on("click", "#blitzcdn-stop-background-link-btn", function (e) {
+      e.preventDefault();
+
+      if (!confirm("Are you sure you want to stop the background linking?")) {
+        return;
+      }
+
+      ajaxPost(
+        {
+          action: "blitzcdn_stop_background_link",
+        },
+        function (response) {
+          if (response.success) {
+            alert("Background linking stopped");
+            checkBackgroundLinkStatus();
+          } else {
+            alert("Failed to stop background linking");
+          }
+        },
+        function (error) {
+          alert(
+            "Error stopping background linking: " +
+              (error.message || "Unknown error"),
+          );
+        },
+      );
+    });
+
+    // Refresh background linking status
+    $(document).on(
+      "click",
+      "#blitzcdn-refresh-background-link-btn",
+      function (e) {
+        e.preventDefault();
+        checkBackgroundLinkStatus();
+      },
+    );
   });
 }

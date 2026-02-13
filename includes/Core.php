@@ -15,6 +15,7 @@ class Core {
     private $background_migrator;
     private $redownloader;
     private $email_redownloader;
+    private $background_email_linker;
     private $zip_migrator;
 
     public static function get_instance() {
@@ -52,6 +53,9 @@ class Core {
 
         // Initialize Email Redownloader
         $this->email_redownloader = new EmailRedownloader($this->appwrite_client);
+
+        // Initialize Background Email Linker
+        $this->background_email_linker = new BackgroundEmailLinker($this->email_redownloader);
 
         // Initialize Zip Migrator (must be instantiated to register REST routes)
         $this->zip_migrator = new ZipMigrator();
