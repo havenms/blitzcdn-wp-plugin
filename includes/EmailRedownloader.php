@@ -655,31 +655,120 @@ class EmailRedownloader {
             $total_variations_updated = 0;
             $total_galleries_updated = 0;
             
+            // Build a mapping of filenames to CDN attachment IDs
+            $filename_to_cdn_attachment = [];
             foreach ($blitzcdn_attachments as $attachment) {
                 $result['attachments_scanned']++;
                 
-                // Skip if no filename
                 if (empty($attachment->filename)) {
                     continue;
                 }
                 
-                // Get just the filename (not the full path)
                 $filename = basename($attachment->filename);
+                if (!empty($filename)) {
+                    $filename_to_cdn_attachment[$filename] = $attachment->ID;
+                    
+                    // Regenerate image size metadata if it's missing or empty
+                    $existing_metadata = wp_get_attachment_metadata($attachment->ID);
+                    if (empty($existing_metadata['sizes'])) {
+                        // Get file ID and CDN URL
+                        $file_id = get_post_meta($attachment->ID, '_blitzcdn_file_id', true);
+                        $cdn_url = get_post_meta($attachment->ID, '_blitzcdn_cdn_url', true);
+                        $attached_file = get_post_meta($attachment->ID, '_wp_attached_file', true);
+                        
+                        if ($file_id && $cdn_url && $attached_file) {
+                            $file_type = wp_check_filetype($attachment->filename);
+                            if (strpos($file_type['type'], 'image/') === 0) {
+                                // Generate size variants
+                                $new_metadata = $this->generate_image_size_metadata($file_id, $cdn_url, $attached_file);
+                                wp_update_attachment_metadata($attachment->ID, $new_metadata);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Now scan WooCommerce products for images that need fixing
+            // Get all products and variations
+            $products = get_posts([
+                'post_type' => ['product', 'product_variation'],
+                'post_status' => ['publish', 'draft', 'pending', 'private'],
+                'posts_per_page' => -1,
+                'fields' => 'ids'
+            ]);
+            
+            foreach ($products as $product_id) {
+                $needs_update = false;
                 
-                if (empty($filename)) {
-                    continue;
+                // Check featured image
+                $thumbnail_id = get_post_meta($product_id, '_thumbnail_id', true);
+                if ($thumbnail_id) {
+                    // Check if this attachment exists and has a file
+                    $attached_file = get_post_meta($thumbnail_id, '_wp_attached_file', true);
+                    $is_cdn =get_post_meta($thumbnail_id, '_blitzcdn_file_id', true);
+                    
+                    // If attachment doesn't have CDN metadata or file, try to find a CDN replacement
+                    if (empty($is_cdn) || empty($attached_file)) {
+                        if (!empty($attached_file)) {
+                            $old_filename = basename($attached_file);
+                            if (isset($filename_to_cdn_attachment[$old_filename])) {
+                                update_post_meta($product_id, '_thumbnail_id', $filename_to_cdn_attachment[$old_filename]);
+                                $total_products_updated++;
+                                $needs_update = true;
+                            }
+                        }
+                    }
                 }
                 
-                // Find any old attachments with the same filename (but without BlitzCDN metadata)
-                $old_attachment_id = $this->find_attachment_by_filename_including_deleted($filename);
+                // Check gallery images for regular products
+                if (get_post_type($product_id) === 'product') {
+                    $gallery_ids = get_post_meta($product_id, '_product_image_gallery', true);
+                    if (!empty($gallery_ids)) {
+                        $gallery_array = array_filter(explode(',', $gallery_ids));
+                        $updated_gallery = [];
+                        $gallery_changed = false;
+                        
+                        foreach ($gallery_array as $gallery_id) {
+                            $attached_file = get_post_meta($gallery_id, '_wp_attached_file', true);
+                            $is_cdn = get_post_meta($gallery_id, '_blitzcdn_file_id', true);
+                            
+                            if (empty($is_cdn) || empty($attached_file)) {
+                                if (!empty($attached_file)) {
+                                    $old_filename = basename($attached_file);
+                                    if (isset($filename_to_cdn_attachment[$old_filename])) {
+                                        $updated_gallery[] = $filename_to_cdn_attachment[$old_filename];
+                                        $gallery_changed = true;
+                                        continue;
+                                    }
+                                }
+                            }
+                            $updated_gallery[] = $gallery_id;
+                        }
+                        
+                        if ($gallery_changed) {
+                            update_post_meta($product_id, '_product_image_gallery', implode(',', $updated_gallery));
+                            $total_galleries_updated++;
+                        }
+                    }
+                }
                 
-                if ($old_attachment_id && $old_attachment_id != $attachment->ID) {
-                    // Update WooCommerce products to use the new attachment ID
-                    $stats = $this->update_woocommerce_product_images($old_attachment_id, $attachment->ID);
-                    
-                    $total_products_updated += $stats['products_updated'];
-                    $total_variations_updated += $stats['variations_updated'];
-                    $total_galleries_updated += $stats['galleries_updated'];
+                // Check variation image
+                if (get_post_type($product_id) === 'product_variation') {
+                    $variation_image_id = get_post_meta($product_id, '_thumbnail_id', true);
+                    if ($variation_image_id) {
+                        $attached_file = get_post_meta($variation_image_id, '_wp_attached_file', true);
+                        $is_cdn = get_post_meta($variation_image_id, '_blitzcdn_file_id', true);
+                        
+                        if (empty($is_cdn) || empty($attached_file)) {
+                            if (!empty($attached_file)) {
+                                $old_filename = basename($attached_file);
+                                if (isset($filename_to_cdn_attachment[$old_filename])) {
+                                    update_post_meta($product_id, '_thumbnail_id', $filename_to_cdn_attachment[$old_filename]);
+                                    $total_variations_updated++;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             
@@ -1019,19 +1108,125 @@ class EmailRedownloader {
         update_post_meta($attachment_id, '_blitzcdn_cdn_url', $cdn_url);
         update_post_meta($attachment_id, '_blitzcdn_virtual_attachment', true);
 
-        // For images, try to get dimensions from Appwrite metadata if available
+        // For images, generate size variants using Appwrite's dynamic resizing
         if (strpos($file_type['type'], 'image/') === 0) {
-            $metadata = [
-                'file' => ltrim($virtual_file, '/'),
-                'width' => 0,
-                'height' => 0,
-                'sizes' => [] // No local sizes since file isn't downloaded
-            ];
-            
+            $metadata = $this->generate_image_size_metadata($file_id, $cdn_url, $virtual_file);
             wp_update_attachment_metadata($attachment_id, $metadata);
         }
 
         return $attachment_id;
+    }
+
+    /**
+     * Generate image size metadata for CDN images using Appwrite's dynamic resizing.
+     *
+     * @param string $file_id     Appwrite file ID
+     * @param string $cdn_url     Base CDN URL
+     * @param string $virtual_file Virtual file path
+     * @return array Image metadata with size variants
+     */
+    private function generate_image_size_metadata($file_id, $cdn_url, $virtual_file) {
+        $metadata = [
+            'file' => ltrim($virtual_file, '/'),
+            'width' => 0,
+            'height' => 0,
+            'sizes' => []
+        ];
+        
+        // Get WordPress registered image sizes
+        $image_sizes = wp_get_registered_image_subsizes();
+        
+        // Add common WordPress sizes if not already registered
+        $standard_sizes = [
+            'thumbnail' => ['width' => 150, 'height' => 150, 'crop' => true],
+            'medium' => ['width' => 300, 'height' => 300, 'crop' => false],
+            'medium_large' => ['width' => 768, 'height' => 0, 'crop' => false],
+            'large' => ['width' => 1024, 'height' => 1024, 'crop' => false],
+            'woocommerce_thumbnail' => ['width' => 300, 'height' => 300, 'crop' => true],
+            'woocommerce_single' => ['width' => 600, 'height' => 600, 'crop' => true],
+            'woocommerce_gallery_thumbnail' => ['width' => 100, 'height' => 100, 'crop' => true],
+            'shop_catalog' => ['width' => 300, 'height' => 300, 'crop' => true],
+            'shop_single' => ['width' => 600, 'height' => 600, 'crop' => true],
+            'shop_thumbnail' => ['width' => 100, 'height' => 100, 'crop' => true],
+        ];
+        
+        $all_sizes = array_merge($standard_sizes, $image_sizes);
+        
+        foreach ($all_sizes as $size_name => $size_data) {
+            if (empty($size_data['width']) && empty($size_data['height'])) {
+                continue;
+            }
+            
+            $width = isset($size_data['width']) ? intval($size_data['width']) : 0;
+            $height = isset($size_data['height']) ? intval($size_data['height']) : 0;
+            
+            // Skip if both are 0
+            if ($width === 0 && $height === 0) {
+                continue;
+            }
+            
+            // Generate CDN URL with size parameters
+            $size_url = $this->get_resized_cdn_url($cdn_url, $width, $height);
+            
+            if ($size_url) {
+                $metadata['sizes'][$size_name] = [
+                    'file' => basename($virtual_file),
+                    'width' => $width,
+                    'height' => $height,
+                    'mime-type' => 'image/jpeg', // Appwrite can convert
+                    'cdn_url' => $size_url
+                ];
+            }
+        }
+        
+        return $metadata;
+    }
+
+    /**
+     * Get CDN URL with specific dimensions for image resizing.
+     *
+     * @param string $base_cdn_url Base CDN URL
+     * @param int    $width        Desired width (0 for auto)
+     * @param int    $height       Desired height (0 for auto)
+     * @return string|false Resized CDN URL or false on failure
+     */
+    private function get_resized_cdn_url($base_cdn_url, $width = 0, $height = 0) {
+        if (empty($base_cdn_url)) {
+            return false;
+        }
+        
+        // Parse the URL to add width/height parameters
+        $url_parts = parse_url($base_cdn_url);
+        if (!$url_parts) {
+            return false;
+        }
+        
+        // Parse existing query string
+        $query_params = [];
+        if (isset($url_parts['query'])) {
+            parse_str($url_parts['query'], $query_params);
+        }
+        
+        // Add width and height parameters
+        if ($width > 0) {
+            $query_params['width'] = $width;
+        }
+        if ($height > 0) {
+            $query_params['height'] = $height;
+        }
+        
+        // Add output format for better performance
+        $query_params['output'] = 'webp';
+        
+        // Rebuild URL
+        $scheme = isset($url_parts['scheme']) ? $url_parts['scheme'] . '://' : '';
+        $host = isset($url_parts['host']) ? $url_parts['host'] : '';
+        $port = isset($url_parts['port']) ? ':' . $url_parts['port'] : '';
+        $path = isset($url_parts['path']) ? $url_parts['path'] : '';
+        $query = !empty($query_params) ? '?' . http_build_query($query_params) : '';
+        $fragment = isset($url_parts['fragment']) ? '#' . $url_parts['fragment'] : '';
+        
+        return $scheme . $host . $port . $path . $query . $fragment;
     }
 
     /**
