@@ -275,9 +275,12 @@ class ZipMigrator
         $files_failed = [];
 
         // Add files to zip
+        // Note: For very large migrations (>1000 images), this can consume significant memory.
+        // The zip is built entirely in memory before being written to disk.
+        // If memory errors occur, reduce zip_batch_size setting to create smaller zips.
         foreach ($metadata['attachments'] as $attachment) {
-            // Add original file
-            $original_path = $base_dir . '/' . $attachment['original_file'];
+            // Add original file - ensure proper path handling
+            $original_path = $base_dir . '/' . ltrim($attachment['original_file'], '/');
             if (file_exists($original_path)) {
                 $zip->addFile($original_path, $attachment['original_file']);
                 $files_added++;
@@ -291,7 +294,7 @@ class ZipMigrator
 
             // Add size files
             foreach ($attachment['sizes'] as $size) {
-                $size_path = $base_dir . '/' . $size['file'];
+                $size_path = $base_dir . '/' . ltrim($size['file'], '/');
                 if (file_exists($size_path)) {
                     $zip->addFile($size_path, $size['file']);
                     $files_added++;
@@ -476,12 +479,12 @@ class ZipMigrator
 
         $data = json_decode($response, true);
 
-        // Update status
+        // Update status - safe_to_quit should be true after upload completes
         $this->update_migration_status([
             'status' => 'awaiting_confirmation',
             'upload_completed_at' => current_time('timestamp'),
             'middleware_response' => $data,
-            'safe_to_quit' => false,
+            'safe_to_quit' => true,
         ]);
 
         return $data;
@@ -510,6 +513,25 @@ class ZipMigrator
         $status = $payload['status'] ?? '';
         $results = $payload['results'] ?? [];
         $errors = $payload['errors'] ?? [];
+
+        // Use atomic increment to prevent race conditions
+        // Get a lock to ensure atomic read-modify-write
+        $lock_key = 'blitzcdn_webhook_lock_' . $migration_id;
+        $lock_acquired = false;
+        $max_attempts = 10;
+        
+        for ($i = 0; $i < $max_attempts; $i++) {
+            if (get_transient($lock_key) === false) {
+                set_transient($lock_key, 1, 30); // 30 second lock
+                $lock_acquired = true;
+                break;
+            }
+            usleep(100000); // Wait 100ms before retry
+        }
+        
+        if (!$lock_acquired) {
+            error_log('BlitzCDN: Could not acquire webhook lock for migration ' . $migration_id);
+        }
 
         $current_status = $this->get_migration_status();
         $processed = isset($current_status['processed']) ? intval($current_status['processed']) : 0;
@@ -593,8 +615,8 @@ class ZipMigrator
             $status_data = array_merge($status_data, [
                 'status' => 'processing_remote',
                 'safe_to_quit' => true,
-                'processed' => $processed,
-                'failed' => $failed,
+                'processed' => $processed + count($results),
+                'failed' => $failed + count($errors),
                 'total_files_uploaded' => isset($payload['total_files_uploaded']) ? intval($payload['total_files_uploaded']) : ($current_status['total_files_uploaded'] ?? 0),
                 'current_batch' => isset($payload['batch_number']) ? intval($payload['batch_number']) : ($current_status['current_batch'] ?? 0),
                 'total_batches' => isset($payload['total_batches']) ? intval($payload['total_batches']) : ($current_status['total_batches'] ?? 0),

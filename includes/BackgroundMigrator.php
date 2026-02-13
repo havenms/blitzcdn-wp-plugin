@@ -7,6 +7,8 @@ class BackgroundMigrator {
     const ACTION_HOOK = 'blitzcdn_background_migration_batch';
     const OPTION_STATUS = 'blitzcdn_migration_status';
     const BATCH_SIZE = 5; // Keep it small to avoid timeouts
+    const LOCK_KEY = 'blitzcdn_migration_lock';
+    const LOCK_TIMEOUT = 60; // Lock timeout in seconds
 
     public function __construct() {
         // Register Action Scheduler hook
@@ -19,6 +21,14 @@ class BackgroundMigrator {
             error_log('BlitzCDN: Action Scheduler is not available. Please ensure woocommerce/action-scheduler is installed.');
             return false;
         }
+
+        // Prevent race condition with transient lock
+        $lock = get_transient(self::LOCK_KEY);
+        if ($lock !== false) {
+            error_log('BlitzCDN: Migration already starting by another process');
+            return false;
+        }
+        set_transient(self::LOCK_KEY, time(), self::LOCK_TIMEOUT);
 
         // Get image IDs to calculate total assets
         $ids = $this->get_batch_ids(999999); // Get all IDs
@@ -40,6 +50,9 @@ class BackgroundMigrator {
 
         // Schedule first batch immediately
         as_schedule_single_action(time(), self::ACTION_HOOK);
+        
+        // Release lock after scheduling
+        delete_transient(self::LOCK_KEY);
         
         // Force Action Scheduler to process immediately
         // This helps if WP-Cron is not working properly

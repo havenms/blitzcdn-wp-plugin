@@ -151,13 +151,13 @@ class Migrator {
         $upload_handler = Core::get_instance()->get_upload_handler(); // Need to expose this in Core
 
         foreach ($ids as $id) {
-            $metadata = wp_get_attachment_metadata($id);
-            if (!$metadata) {
-                $results[$id] = ['status' => 'error', 'message' => 'No metadata'];
-                continue;
-            }
-
             try {
+                $metadata = wp_get_attachment_metadata($id);
+                if (!$metadata) {
+                    $results[$id] = ['status' => 'error', 'message' => 'No metadata'];
+                    continue;
+                }
+
                 // Reuse the logic in UploadHandler
                 // We need to make sure we don't double-process if already done, but the query filters that.
                 // However, handle_upload_phase_2 checks for existing meta too.
@@ -179,7 +179,9 @@ class Migrator {
                     'assets_count' => $assets_count // Return asset count for progress tracking
                 ];
             } catch (\Exception $e) {
+                error_log('BlitzCDN: Error processing attachment ' . $id . ': ' . $e->getMessage());
                 $results[$id] = ['status' => 'error', 'message' => $e->getMessage()];
+                // Continue processing other attachments
             }
         }
 

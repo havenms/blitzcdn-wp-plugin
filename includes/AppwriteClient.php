@@ -106,6 +106,12 @@ class AppwriteClient {
             return false;
         }
 
+        // Validate file exists before attempting upload
+        if (!file_exists($file_path)) {
+            error_log('BlitzCDN Upload Error: File not found: ' . $file_path);
+            return false;
+        }
+
         try {
             $file = $this->storage->createFile(
                 $this->bucket_id,

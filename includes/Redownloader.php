@@ -348,6 +348,9 @@ class Redownloader {
             ];
         }
 
+        // Store expected size for verification
+        $expected_size = strlen($file_content);
+
         // Write file to disk
         $bytes_written = @file_put_contents($target_path, $file_content);
 
@@ -359,14 +362,26 @@ class Redownloader {
             ];
         }
 
-        // Verify the file was written correctly
-        if (!file_exists($target_path) || filesize($target_path) !== strlen($file_content)) {
+        // Verify file integrity before considering it successful
+        if (!file_exists($target_path)) {
             return [
                 'status' => 'error',
-                'message' => 'File verification failed after write',
+                'message' => 'File verification failed: file does not exist after write',
                 'path' => $target_path
             ];
         }
+
+        $actual_size = filesize($target_path);
+        if ($actual_size !== $expected_size) {
+            @unlink($target_path); // Delete corrupted file
+            return [
+                'status' => 'error',
+                'message' => "File verification failed: size mismatch (expected {$expected_size}, got {$actual_size})",
+                'path' => $target_path
+            ];
+        }
+
+
 
         return [
             'status' => 'success',
