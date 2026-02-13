@@ -2687,6 +2687,13 @@ if (typeof jQuery === "undefined") {
             msg +
             "</div>",
         );
+        
+        // Keep only last 100 log entries for performance
+        var logEntries = $log.children();
+        if (logEntries.length > 100) {
+          logEntries.slice(0, logEntries.length - 100).remove();
+        }
+        
         $log.scrollTop($log[0].scrollHeight);
       }
 
