@@ -532,6 +532,7 @@ class Migrator {
             // Log settings for debugging (only on first batch)
             if ($offset === 0) {
                 error_log('BlitzCDN Fix URL Structure - Settings Check:');
+                error_log('  Raw settings: ' . print_r($settings, true));
                 error_log('  Endpoint: ' . ($endpoint ?: 'EMPTY'));
                 error_log('  Bucket ID: ' . ($bucket_id ?: 'EMPTY'));
                 error_log('  Project ID: ' . ($project_id ?: 'EMPTY'));
@@ -960,7 +961,13 @@ class Migrator {
                 'has_more' => $has_more,
                 'next_offset' => $next_offset,
                 'sample_urls' => $sample_urls,
-                'processed_urls' => $processed_urls
+                'processed_urls' => $processed_urls,
+                'settings_check' => [ // Add settings info for debugging
+                    'endpoint' => $endpoint ?: 'NOT SET',
+                    'bucket_id' => $bucket_id ?: 'NOT SET',
+                    'project_id' => $project_id ?: 'NOT SET',
+                    'cdn_domain' => $cdn_domain ?: 'NOT SET'
+                ]
             ]);
 
         } catch (\Exception $e) {

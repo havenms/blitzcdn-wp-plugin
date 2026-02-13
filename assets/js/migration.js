@@ -2716,6 +2716,18 @@ if (typeof jQuery === "undefined") {
                     " CDN attachments to process",
                   "info",
                 );
+                
+                // Display settings check on first batch
+                if (data.settings_check) {
+                  addLog("Settings Check:", "info");
+                  addLog("  Endpoint: " + data.settings_check.endpoint, 
+                         data.settings_check.endpoint === "NOT SET" ? "error" : "success");
+                  addLog("  Bucket ID: " + data.settings_check.bucket_id,
+                         data.settings_check.bucket_id === "NOT SET" ? "error" : "success");
+                  addLog("  Project ID: " + data.settings_check.project_id,
+                         data.settings_check.project_id === "NOT SET" ? "error" : "success");
+                  addLog("", "info", true);
+                }
               }
 
               // Accumulate statistics
