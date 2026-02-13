@@ -852,14 +852,41 @@ class Migrator {
                     ];
                     
                     $fixed_count++;
-                } else {
-                    // Main URL is correct, but check if image size URLs need fixing
-                    $log_entry['checks'][] = 'Main URL appears correct, checking image size variants...';
-                    
-                    $metadata = wp_get_attachment_metadata($attachment->ID);
-                    if (!empty($metadata['sizes'])) {
-                        $sizes_fixed = 0;
-                        $sizes_details = [];
+                        } else {
+                            // Main URL is correct, but check if image size URLs need fixing
+                            $log_entry['checks'][] = 'Main URL appears correct, checking image size variants...';
+                            
+                            $metadata = wp_get_attachment_metadata($attachment->ID);
+                            if (!empty($metadata['sizes'])) {
+                                $sizes_fixed = 0;
+                                $sizes_details = [];
+                                
+                                $log_entry['checks'][] = 'Found ' . count($metadata['sizes']) . ' image size variants';
+                                
+                                // Check if _blitzcdn_sizes exists
+                                $existing_blitzcdn_sizes = get_post_meta($attachment->ID, '_blitzcdn_sizes', true);
+                                $needs_blitzcdn_sizes = empty($existing_blitzcdn_sizes);
+                                
+                                if ($needs_blitzcdn_sizes) {
+                                    // _blitzcdn_sizes doesn't exist, create it from existing valid cdn_url fields
+                                    $blitzcdn_sizes = [];
+                                    foreach ($metadata['sizes'] as $size_name => $size_data) {
+                                        if (!empty($size_data['cdn_url'])) {
+                                            $blitzcdn_sizes[$size_name] = [
+                                                'url' => $size_data['cdn_url'],
+                                                'width' => isset($size_data['width']) ? $size_data['width'] : 0,
+                                                'height' => isset($size_data['height']) ? $size_data['height'] : 0
+                                            ];
+                                        }
+                                    }
+                                    
+                                    if (!empty($blitzcdn_sizes)) {
+                                        update_post_meta($attachment->ID, '_blitzcdn_sizes', $blitzcdn_sizes);
+                                        $log_entry['checks'][] = '✓ Created _blitzcdn_sizes meta from existing valid URLs (' . count($blitzcdn_sizes) . ' sizes)';
+                                        $needs_update = true; // Mark as updated
+                                        $action_type = 'linked';
+                                    }
+                                }
                         
                         $log_entry['checks'][] = 'Found ' . count($metadata['sizes']) . ' image size variants';
                         

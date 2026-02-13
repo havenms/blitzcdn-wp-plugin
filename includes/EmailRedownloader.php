@@ -1078,6 +1078,30 @@ class EmailRedownloader {
                                 }
                             } else if (count($metadata['sizes']) > 3 && !$attachment_fixed) {
                                 $attachment_logs[] = '  ✓ All sizes valid';
+                                
+                                // Even if all sizes are valid, check if _blitzcdn_sizes exists
+                                $existing_blitzcdn_sizes = get_post_meta($attachment->ID, '_blitzcdn_sizes', true);
+                                if (empty($existing_blitzcdn_sizes)) {
+                                    // Create _blitzcdn_sizes from existing valid cdn_url fields
+                                    $blitzcdn_sizes = [];
+                                    foreach ($metadata['sizes'] as $size_name => $size_data) {
+                                        if (!empty($size_data['cdn_url'])) {
+                                            $blitzcdn_sizes[$size_name] = [
+                                                'url' => $size_data['cdn_url'],
+                                                'width' => isset($size_data['width']) ? $size_data['width'] : 0,
+                                                'height' => isset($size_data['height']) ? $size_data['height'] : 0
+                                            ];
+                                        }
+                                    }
+                                    
+                                    if (!empty($blitzcdn_sizes)) {
+                                        update_post_meta($attachment->ID, '_blitzcdn_sizes', $blitzcdn_sizes);
+                                        clean_post_cache($attachment->ID);
+                                        $attachment_logs[] = sprintf('  ✓ Created _blitzcdn_sizes meta (%d sizes)', count($blitzcdn_sizes));
+                                        $attachment_fixed = true;
+                                        $attachments_with_broken_urls++;
+                                    }
+                                }
                             }
                         } else {
                             $attachment_logs[] = '  ⚠ No image sizes found';
