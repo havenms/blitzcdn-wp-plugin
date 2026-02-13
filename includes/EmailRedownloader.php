@@ -403,6 +403,66 @@ class EmailRedownloader {
     }
 
     /**
+     * Find a local WordPress attachment by filename that is NOT linked to CDN.
+     *
+     * @param string $filename The filename to search for
+     * @return int|false Attachment ID if found, false otherwise
+     */
+    private function find_local_attachment_by_filename($filename) {
+        global $wpdb;
+        
+        // Search for attachments where _wp_attached_file contains the filename
+        // and does NOT have BlitzCDN metadata (meaning it's a local file)
+        $query = $wpdb->prepare(
+            "SELECT p.ID FROM {$wpdb->posts} p
+            INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+            WHERE p.post_type = 'attachment'
+            AND p.post_status = 'inherit'
+            AND pm.meta_key = '_wp_attached_file'
+            AND pm.meta_value LIKE %s
+            AND NOT EXISTS (
+                SELECT 1 FROM {$wpdb->postmeta} pm2
+                WHERE pm2.post_id = p.ID
+                AND pm2.meta_key IN ('_blitzcdn_file_id', '_blitzcdn_cdn_url')
+            )
+            LIMIT 1",
+            '%' . $wpdb->esc_like($filename)
+        );
+        
+        $attachment_id = $wpdb->get_var($query);
+        
+        return $attachment_id ? (int) $attachment_id : false;
+    }
+
+    /**
+     * Convert a local WordPress attachment to use CDN URL.
+     *
+     * @param int    $attachment_id WordPress attachment ID
+     * @param string $file_id       Appwrite file ID
+     * @param string $cdn_url       CDN URL for the file
+     * @return bool True on success, false on failure
+     */
+    private function convert_local_to_cdn_attachment($attachment_id, $file_id, $cdn_url) {
+        // Update post GUID to use CDN URL
+        $updated = wp_update_post([
+            'ID' => $attachment_id,
+            'guid' => $cdn_url
+        ], true);
+        
+        if (is_wp_error($updated)) {
+            error_log('BlitzCDN: Failed to update attachment GUID: ' . $updated->get_error_message());
+            return false;
+        }
+
+        // Add BlitzCDN metadata
+        update_post_meta($attachment_id, '_blitzcdn_file_id', $file_id);
+        update_post_meta($attachment_id, '_blitzcdn_cdn_url', $cdn_url);
+        update_post_meta($attachment_id, '_blitzcdn_converted_from_local', true);
+
+        return true;
+    }
+
+    /**
      * Process a batch of file IDs.
      *
      * @param string[] $file_ids          Array of Appwrite file IDs
@@ -568,11 +628,11 @@ class EmailRedownloader {
         $file_name = $file_meta['name'] ?? 'unknown';
         $result['file_name'] = $file_name;
 
-        // Check if file already exists in WordPress
+        // Check if file already has BlitzCDN metadata (already linked to CDN)
         $existing_attachment = $this->find_attachment_by_file_id($file_id);
         if ($existing_attachment) {
             $result['status'] = 'skipped';
-            $result['message'] = 'File already exists as WordPress attachment';
+            $result['message'] = 'File already linked to CDN';
             $result['attachment_id'] = $existing_attachment;
             return $result;
         }
@@ -585,7 +645,25 @@ class EmailRedownloader {
             return $result;
         }
 
-        // Create WordPress attachment pointing to CDN URL
+        // Check if local file exists with same name but not linked to CDN
+        $local_attachment = $this->find_local_attachment_by_filename($file_name);
+        
+        if ($local_attachment) {
+            // Update existing local attachment to use CDN
+            $updated = $this->convert_local_to_cdn_attachment($local_attachment, $file_id, $cdn_url);
+            
+            if ($updated) {
+                $result['attachment_id'] = $local_attachment;
+                $result['status'] = 'success';
+                $result['message'] = 'Local file updated to use CDN link';
+            } else {
+                $result['message'] = 'Failed to update local file to CDN link';
+            }
+            
+            return $result;
+        }
+
+        // Create new WordPress attachment pointing to CDN URL
         $attachment_id = $this->create_virtual_attachment($file_id, $file_name, $cdn_url);
         
         if ($attachment_id) {
