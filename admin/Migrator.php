@@ -518,66 +518,125 @@ class Migrator {
         global $wpdb;
 
         try {
-            // Get all attachments with BlitzCDN URLs
-            $attachments = $wpdb->get_results(
-                "SELECT p.ID, pm_url.meta_value as cdn_url, pm_guid.meta_value as guid
+            // Get all attachments with BlitzCDN URLs and also check GUIDs
+            $results = $wpdb->get_results(
+                "SELECT p.ID, 
+                        pm_url.meta_value as cdn_url,
+                        p.guid as post_guid,
+                        pm_file_id.meta_value as file_id
                 FROM {$wpdb->posts} p
-                INNER JOIN {$wpdb->postmeta} pm_url ON p.ID = pm_url.post_id AND pm_url.meta_key = '_blitzcdn_cdn_url'
-                LEFT JOIN {$wpdb->postmeta} pm_guid ON p.ID = pm_guid.post_id AND pm_guid.meta_key = '_wp_attachment_metadata'
+                LEFT JOIN {$wpdb->postmeta} pm_url ON p.ID = pm_url.post_id AND pm_url.meta_key = '_blitzcdn_cdn_url'
+                LEFT JOIN {$wpdb->postmeta} pm_file_id ON p.ID = pm_file_id.post_id AND pm_file_id.meta_key = '_blitzcdn_file_id'
                 WHERE p.post_type = 'attachment'
-                AND pm_url.meta_value != ''"
+                AND (pm_url.meta_value != '' OR pm_file_id.meta_value != '' OR p.guid LIKE '%storage/buckets%')
+                ORDER BY p.ID DESC
+                LIMIT 100"
             );
 
             $fixed_count = 0;
             $already_correct = 0;
+            $reconstructed_count = 0;
+            $sample_urls = [];
 
-            foreach ($attachments as $attachment) {
+            foreach ($results as $attachment) {
                 $cdn_url = $attachment->cdn_url;
-                $needs_update = false;
+                $post_guid = $attachment->post_guid;
+                $file_id = $attachment->file_id;
+                
+                // Collect sample URLs for debugging
+                if (count($sample_urls) < 5) {
+                    $sample_urls[] = [
+                        'id' => $attachment->ID,
+                        'cdn_url' => $cdn_url,
+                        'guid' => $post_guid,
+                        'file_id' => $file_id
+                    ];
+                }
 
-                // Check if URL is missing /v1/ in the path
-                if (preg_match('#/storage/buckets/#', $cdn_url) && !preg_match('#/v1/storage/buckets/#', $cdn_url)) {
-                    // Fix the URL by adding /v1/ before /storage
-                    $fixed_url = preg_replace('#(https?://[^/]+)(/storage/buckets/)#', '$1/v1$2', $cdn_url);
-                    
-                    if ($fixed_url !== $cdn_url) {
-                        // Update _blitzcdn_cdn_url
-                        update_post_meta($attachment->ID, '_blitzcdn_cdn_url', $fixed_url);
+                $urls_to_check = array_filter([$cdn_url, $post_guid]);
+                $needs_update = false;
+                $new_cdn_url = null;
+
+                foreach ($urls_to_check as $url) {
+                    if (empty($url)) continue;
+
+                    // Check if URL has storage/buckets but is missing /v1/
+                    if (preg_match('#/storage/buckets/#', $url) && !preg_match('#/v1/storage/buckets/#', $url)) {
+                        // Fix the URL by adding /v1/ before /storage
+                        $fixed_url = preg_replace('#(https?://[^/]+)(/storage/buckets/)#', '$1/v1$2', $url);
                         
-                        // Update post GUID if it's the same as the old CDN URL
-                        $post = get_post($attachment->ID);
-                        if ($post && $post->guid === $cdn_url) {
-                            $wpdb->update(
-                                $wpdb->posts,
-                                ['guid' => $fixed_url],
-                                ['ID' => $attachment->ID]
-                            );
+                        if ($fixed_url !== $url) {
+                            $new_cdn_url = $fixed_url;
+                            $needs_update = true;
+                            break;
                         }
-                        
-                        // Fix image size URLs in metadata
-                        $metadata = wp_get_attachment_metadata($attachment->ID);
-                        if (!empty($metadata['sizes'])) {
-                            foreach ($metadata['sizes'] as $size_name => &$size_data) {
-                                if (!empty($size_data['cdn_url'])) {
-                                    $size_data['cdn_url'] = preg_replace('#(https?://[^/]+)(/storage/buckets/)#', '$1/v1$2', $size_data['cdn_url']);
-                                }
-                            }
-                            wp_update_attachment_metadata($attachment->ID, $metadata);
-                        }
-                        
-                        $fixed_count++;
-                        $needs_update = true;
                     }
+                }
+
+                // If we have a file_id but no proper CDN URL, reconstruct it
+                if (!$needs_update && !empty($file_id) && (empty($cdn_url) || !preg_match('#/v1/storage/buckets/#', $cdn_url))) {
+                    // Get Appwrite settings to reconstruct the URL
+                    $settings = get_option('blitzcdn_settings', []);
+                    $endpoint = $settings['endpoint'] ?? '';
+                    $bucket_id = $settings['bucket_id'] ?? '';
+                    $project_id = $settings['project_id'] ?? '';
+                    $cdn_domain = $settings['cdn_domain'] ?? '';
+
+                    if ($endpoint && $bucket_id && $project_id) {
+                        $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                        
+                        // Ensure proper URL format
+                        $base_url = rtrim($base_url, '/');
+                        if (!preg_match('/^https?:\/\//', $base_url)) {
+                            $base_url = 'https://' . $base_url;
+                        }
+                        
+                        // Add /v1 if not present
+                        if (!preg_match('/\/v1$/', $base_url)) {
+                            $base_url .= '/v1';
+                        }
+                        
+                        $new_cdn_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
+                        $needs_update = true;
+                        $reconstructed_count++;
+                    }
+                }
+
+                if ($needs_update && $new_cdn_url) {
+                    // Update _blitzcdn_cdn_url
+                    update_post_meta($attachment->ID, '_blitzcdn_cdn_url', $new_cdn_url);
+                    
+                    // Update post GUID 
+                    $wpdb->update(
+                        $wpdb->posts,
+                        ['guid' => $new_cdn_url],
+                        ['ID' => $attachment->ID]
+                    );
+                    
+                    // Fix image size URLs in metadata
+                    $metadata = wp_get_attachment_metadata($attachment->ID);
+                    if (!empty($metadata['sizes'])) {
+                        foreach ($metadata['sizes'] as $size_name => &$size_data) {
+                            if (!empty($size_data['cdn_url'])) {
+                                $size_data['cdn_url'] = preg_replace('#(https?://[^/]+)(/storage/buckets/)#', '$1/v1$2', $size_data['cdn_url']);
+                            }
+                        }
+                        wp_update_attachment_metadata($attachment->ID, $metadata);
+                    }
+                    
+                    $fixed_count++;
                 } else {
                     $already_correct++;
                 }
             }
 
             wp_send_json_success([
-                'message' => "Fixed {$fixed_count} URLs, {$already_correct} already correct",
+                'message' => "Fixed {$fixed_count} URLs ({$reconstructed_count} reconstructed), {$already_correct} already correct",
                 'fixed' => $fixed_count,
                 'already_correct' => $already_correct,
-                'total' => count($attachments)
+                'reconstructed' => $reconstructed_count,
+                'total' => count($results),
+                'sample_urls' => $sample_urls
             ]);
 
         } catch (\Exception $e) {

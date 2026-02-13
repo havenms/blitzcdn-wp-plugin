@@ -2661,11 +2661,34 @@ if (typeof jQuery === "undefined") {
             var statsHtml = "";
             statsHtml +=
               "<strong>Fixed:</strong> " + (data.fixed || 0) + "<br>";
+            if (data.reconstructed) {
+              statsHtml +=
+                "<strong>Reconstructed:</strong> " +
+                data.reconstructed +
+                "<br>";
+            }
             statsHtml +=
               "<strong>Already correct:</strong> " +
               (data.already_correct || 0) +
               "<br>";
             statsHtml += "<strong>Total:</strong> " + (data.total || 0);
+
+            // Show sample URLs for debugging
+            if (data.sample_urls && data.sample_urls.length > 0) {
+              statsHtml += "<br><br><strong>Sample URLs found:</strong><br>";
+              data.sample_urls.forEach(function (item) {
+                statsHtml +=
+                  "<small>ID " +
+                  item.id +
+                  ":<br>CDN: " +
+                  (item.cdn_url || "none") +
+                  "<br>GUID: " +
+                  (item.guid || "none") +
+                  "<br>File ID: " +
+                  (item.file_id || "none") +
+                  "<br><br></small>";
+              });
+            }
 
             $stats.html(statsHtml);
             $status.fadeIn();
