@@ -2659,8 +2659,12 @@ if (typeof jQuery === "undefined") {
             $message.text(data.message || "URLs fixed successfully");
 
             var statsHtml = "";
-            statsHtml += "<strong>Fixed:</strong> " + (data.fixed || 0) + "<br>";
-            statsHtml += "<strong>Already correct:</strong> " + (data.already_correct || 0) + "<br>";
+            statsHtml +=
+              "<strong>Fixed:</strong> " + (data.fixed || 0) + "<br>";
+            statsHtml +=
+              "<strong>Already correct:</strong> " +
+              (data.already_correct || 0) +
+              "<br>";
             statsHtml += "<strong>Total:</strong> " + (data.total || 0);
 
             $stats.html(statsHtml);
