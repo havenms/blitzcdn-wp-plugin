@@ -842,10 +842,29 @@ class EmailRedownloader {
                         // Get attachment metadata
                         $metadata = wp_get_attachment_metadata($attachment->ID);
                         
+                        // DEBUG: Log raw metadata structure
+                        if ($checked_count <= 2) {
+                            $attachment_logs[] = '  DEBUG: Metadata keys: ' . implode(', ', array_keys($metadata ?: []));
+                            if (isset($metadata['sizes'])) {
+                                $attachment_logs[] = '  DEBUG: Size names: ' . implode(', ', array_keys($metadata['sizes']));
+                            }
+                        }
+                        
                         // Check main CDN URL first
                         $cdn_url = get_post_meta($attachment->ID, '_blitzcdn_cdn_url', true);
+                        $guid = get_post_field('guid', $attachment->ID);
+                        
                         if (!empty($cdn_url)) {
-                            $attachment_logs[] = '  Main URL: ' . $cdn_url;
+                            $attachment_logs[] = '  Main CDN URL: ' . $cdn_url;
+                        } else {
+                            $attachment_logs[] = '  ⚠ No _blitzcdn_cdn_url meta';
+                        }
+                        
+                        if (!empty($guid) && strpos($guid, 'storage/buckets') !== false) {
+                            $attachment_logs[] = '  GUID: ' . $guid;
+                        }
+                        
+                        if (!empty($cdn_url)) {
                             $is_main_broken = false;
                             $main_reasons = [];
                             
@@ -860,8 +879,10 @@ class EmailRedownloader {
                                 }
                                 if (preg_match('#/files/[a-f0-9]+/[^/\?]+\.(jpg|jpeg|png|gif|webp|svg)#i', $cdn_url)) {
                                     $is_main_broken = true;
-                                    $main_reasons[] = 'has filename';
+                                    $main_reasons[] = 'has filename at end';
                                 }
+                            } else {
+                                $attachment_logs[] = '  ⓘ Not a CDN URL (no /storage/buckets/)';
                             }
                             
                             if ($is_main_broken) {
@@ -869,7 +890,7 @@ class EmailRedownloader {
                                 
                                 if (preg_match('#/files/([a-f0-9]+)(?:/|$|\?)#', $cdn_url, $matches)) {
                                     $file_id = $matches[1];
-                                    $attachment_logs[] = '  File ID: ' . $file_id;
+                                    $attachment_logs[] = '  Extracted file ID: ' . $file_id;
                                     
                                     $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
                                     $base_url = rtrim($base_url, '/');
@@ -896,22 +917,31 @@ class EmailRedownloader {
                                     $attachment_logs[] = '  New: ' . $new_cdn_url;
                                     $attachment_fixed = true;
                                 } else {
-                                    $attachment_logs[] = '  ✗ Could not extract file ID';
+                                    $attachment_logs[] = '  ✗ Could not extract file ID from URL';
                                 }
-                            } else {
+                            } else if (!empty($main_reasons)) {
                                 $attachment_logs[] = '  ✓ Main URL is valid';
                             }
-                        } else {
-                            $attachment_logs[] = '  ⚠ No main CDN URL found';
                         }
                         
                         // Check image sizes
                         if (!empty($metadata['sizes'])) {
                             $attachment_logs[] = sprintf('  Checking %d image sizes...', count($metadata['sizes']));
                             
+                            $size_count = 0;
                             foreach ($metadata['sizes'] as $size_name => &$size_data) {
+                                $size_count++;
+                                
+                                // Log first 2 sizes in detail for first 2 attachments (debugging)
+                                $verbose = ($checked_count <= 2 && $size_count <= 2);
+                                
                                 if (!empty($size_data['cdn_url'])) {
                                     $old_url = $size_data['cdn_url'];
+                                    
+                                    if ($verbose) {
+                                        $attachment_logs[] = sprintf('    Size "%s" URL: %s', $size_name, $old_url);
+                                    }
+                                    
                                     $is_broken = false;
                                     $reasons = [];
                                     
@@ -929,6 +959,8 @@ class EmailRedownloader {
                                             $is_broken = true;
                                             $reasons[] = 'has filename';
                                         }
+                                    } else if ($verbose) {
+                                        $attachment_logs[] = sprintf('      Not a CDN URL');
                                     }
                                     
                                     if ($is_broken) {
@@ -952,16 +984,15 @@ class EmailRedownloader {
                                             $size_data['cdn_url'] = $new_url;
                                             $size_fixes++;
                                             $attachment_fixed = true;
-                                            $attachment_logs[] = sprintf('      Fixed: %s', $new_url);
+                                            $attachment_logs[] = sprintf('      ✓ Fixed to: %s', substr($new_url, 0, 80) . '...');
                                         } else {
                                             $attachment_logs[] = '      ✗ Could not extract file ID';
                                         }
-                                    } else {
-                                        // Only log first few valid sizes to reduce noise
-                                        if ($size_fixes == 0 && count($metadata['sizes']) <= 3) {
-                                            $attachment_logs[] = sprintf('    ✓ Size "%s": valid', $size_name);
-                                        }
+                                    } else if ($verbose) {
+                                        $attachment_logs[] = sprintf('      ✓ Valid');
                                     }
+                                } else if ($verbose) {
+                                    $attachment_logs[] = sprintf('    Size "%s": No cdn_url field', $size_name);
                                 }
                             }
                             
