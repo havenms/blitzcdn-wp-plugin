@@ -2435,14 +2435,14 @@ if (typeof jQuery === "undefined") {
           },
           function (xhr, status, error) {
             $btn.prop("disabled", false).text("Reconnect WooCommerce Images");
-            
+
             var errorMsg = "Request failed";
-            
+
             // Try to get detailed error message
             if (xhr && xhr.responseJSON && xhr.responseJSON.data) {
               if (xhr.responseJSON.data.message) {
                 errorMsg = xhr.responseJSON.data.message;
-              } else if (typeof xhr.responseJSON.data === 'string') {
+              } else if (typeof xhr.responseJSON.data === "string") {
                 errorMsg = xhr.responseJSON.data;
               }
             } else if (xhr && xhr.responseText) {
@@ -2463,7 +2463,7 @@ if (typeof jQuery === "undefined") {
             } else if (status) {
               errorMsg = "Request failed: " + status;
             }
-            
+
             console.error("WooCommerce reconnect error:", xhr, status, error);
             $errorMessage.text(errorMsg);
             $error.fadeIn();
