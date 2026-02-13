@@ -522,17 +522,16 @@ class Migrator {
         $limit = 50; // Process 50 attachments per batch
 
         try {
-            // Get Appwrite settings once at the beginning
-            $settings = get_option('blitzcdn_settings', []);
-            $endpoint = $settings['endpoint'] ?? '';
-            $bucket_id = $settings['bucket_id'] ?? '';
-            $project_id = $settings['project_id'] ?? '';
-            $cdn_domain = $settings['cdn_domain'] ?? '';
+            // Get Appwrite settings from AppwriteClient (which loads from .env)
+            $appwrite_client = new \BlitzCDN\AppwriteClient();
+            $endpoint = $appwrite_client->get_endpoint();
+            $bucket_id = $appwrite_client->get_bucket_id();
+            $project_id = $appwrite_client->get_project_id();
+            $cdn_domain = $appwrite_client->get_cdn_domain();
             
             // Log settings for debugging (only on first batch)
             if ($offset === 0) {
                 error_log('BlitzCDN Fix URL Structure - Settings Check:');
-                error_log('  Raw settings: ' . print_r($settings, true));
                 error_log('  Endpoint: ' . ($endpoint ?: 'EMPTY'));
                 error_log('  Bucket ID: ' . ($bucket_id ?: 'EMPTY'));
                 error_log('  Project ID: ' . ($project_id ?: 'EMPTY'));
