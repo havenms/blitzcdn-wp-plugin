@@ -599,67 +599,85 @@ class EmailRedownloader {
             'galleries_updated' => 0
         ];
         
-        // Get all attachments that have BlitzCDN metadata
-        $blitzcdn_attachments = $wpdb->get_results(
-            "SELECT DISTINCT p.ID, pm_file.meta_value as filename
-            FROM {$wpdb->posts} p
-            INNER JOIN {$wpdb->postmeta} pm_blitz ON p.ID = pm_blitz.post_id
-            LEFT JOIN {$wpdb->postmeta} pm_file ON p.ID = pm_file.post_id AND pm_file.meta_key = '_wp_attached_file'
-            WHERE p.post_type = 'attachment'
-            AND p.post_status = 'inherit'
-            AND pm_blitz.meta_key = '_blitzcdn_file_id'
-            AND pm_blitz.meta_value != ''
-            ORDER BY p.ID DESC"
-        );
-        
-        if (empty($blitzcdn_attachments)) {
-            $result['status'] = 'success';
-            $result['message'] = 'No CDN attachments found';
-            return $result;
-        }
-        
-        $total_products_updated = 0;
-        $total_variations_updated = 0;
-        $total_galleries_updated = 0;
-        
-        foreach ($blitzcdn_attachments as $attachment) {
-            $result['attachments_scanned']++;
-            
-            // Get just the filename (not the full path)
-            $filename = basename($attachment->filename);
-            
-            if (empty($filename)) {
-                continue;
+        try {
+            // Check if WooCommerce is active
+            if (!class_exists('WooCommerce')) {
+                $result['status'] = 'success';
+                $result['message'] = 'WooCommerce not detected - no products to update';
+                return $result;
             }
             
-            // Find any old attachments with the same filename (but without BlitzCDN metadata)
-            $old_attachment_id = $this->find_attachment_by_filename_including_deleted($filename);
-            
-            if ($old_attachment_id && $old_attachment_id != $attachment->ID) {
-                // Update WooCommerce products to use the new attachment ID
-                $stats = $this->update_woocommerce_product_images($old_attachment_id, $attachment->ID);
-                
-                $total_products_updated += $stats['products_updated'];
-                $total_variations_updated += $stats['variations_updated'];
-                $total_galleries_updated += $stats['galleries_updated'];
-            }
-        }
-        
-        $result['products_updated'] = $total_products_updated;
-        $result['variations_updated'] = $total_variations_updated;
-        $result['galleries_updated'] = $total_galleries_updated;
-        
-        if ($total_products_updated > 0 || $total_variations_updated > 0 || $total_galleries_updated > 0) {
-            $result['status'] = 'success';
-            $result['message'] = sprintf(
-                'Updated %d products, %d variations, and %d galleries',
-                $total_products_updated,
-                $total_variations_updated,
-                $total_galleries_updated
+            // Get all attachments that have BlitzCDN metadata
+            $blitzcdn_attachments = $wpdb->get_results(
+                "SELECT DISTINCT p.ID, pm_file.meta_value as filename
+                FROM {$wpdb->posts} p
+                INNER JOIN {$wpdb->postmeta} pm_blitz ON p.ID = pm_blitz.post_id
+                LEFT JOIN {$wpdb->postmeta} pm_file ON p.ID = pm_file.post_id AND pm_file.meta_key = '_wp_attached_file'
+                WHERE p.post_type = 'attachment'
+                AND p.post_status = 'inherit'
+                AND pm_blitz.meta_key = '_blitzcdn_file_id'
+                AND pm_blitz.meta_value != ''
+                ORDER BY p.ID DESC"
             );
-        } else {
-            $result['status'] = 'success';
-            $result['message'] = 'No WooCommerce products needed updating';
+            
+            if (empty($blitzcdn_attachments)) {
+                $result['status'] = 'success';
+                $result['message'] = 'No CDN attachments found';
+                return $result;
+            }
+            
+            $total_products_updated = 0;
+            $total_variations_updated = 0;
+            $total_galleries_updated = 0;
+            
+            foreach ($blitzcdn_attachments as $attachment) {
+                $result['attachments_scanned']++;
+                
+                // Skip if no filename
+                if (empty($attachment->filename)) {
+                    continue;
+                }
+                
+                // Get just the filename (not the full path)
+                $filename = basename($attachment->filename);
+                
+                if (empty($filename)) {
+                    continue;
+                }
+                
+                // Find any old attachments with the same filename (but without BlitzCDN metadata)
+                $old_attachment_id = $this->find_attachment_by_filename_including_deleted($filename);
+                
+                if ($old_attachment_id && $old_attachment_id != $attachment->ID) {
+                    // Update WooCommerce products to use the new attachment ID
+                    $stats = $this->update_woocommerce_product_images($old_attachment_id, $attachment->ID);
+                    
+                    $total_products_updated += $stats['products_updated'];
+                    $total_variations_updated += $stats['variations_updated'];
+                    $total_galleries_updated += $stats['galleries_updated'];
+                }
+            }
+            
+            $result['products_updated'] = $total_products_updated;
+            $result['variations_updated'] = $total_variations_updated;
+            $result['galleries_updated'] = $total_galleries_updated;
+            
+            if ($total_products_updated > 0 || $total_variations_updated > 0 || $total_galleries_updated > 0) {
+                $result['status'] = 'success';
+                $result['message'] = sprintf(
+                    'Updated %d products, %d variations, and %d galleries',
+                    $total_products_updated,
+                    $total_variations_updated,
+                    $total_galleries_updated
+                );
+            } else {
+                $result['status'] = 'success';
+                $result['message'] = 'No WooCommerce products needed updating';
+            }
+        } catch (\Exception $e) {
+            error_log('BlitzCDN: Error reconnecting WooCommerce images: ' . $e->getMessage());
+            $result['status'] = 'error';
+            $result['message'] = 'Error: ' . $e->getMessage();
         }
         
         return $result;

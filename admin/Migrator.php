@@ -472,16 +472,28 @@ class Migrator {
         check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
 
         if (!current_user_can('manage_options')) {
-            wp_send_json_error('Unauthorized');
+            wp_send_json_error(['message' => 'Unauthorized']);
+            return;
         }
 
-        $email_redownloader = Core::get_instance()->get_email_redownloader();
-        $result = $email_redownloader->reconnect_woocommerce_images();
+        try {
+            $email_redownloader = Core::get_instance()->get_email_redownloader();
+            
+            if (!$email_redownloader) {
+                wp_send_json_error(['message' => 'Email redownloader not available']);
+                return;
+            }
+            
+            $result = $email_redownloader->reconnect_woocommerce_images();
 
-        if ($result['status'] === 'success') {
-            wp_send_json_success($result);
-        } else {
-            wp_send_json_error($result);
+            if ($result['status'] === 'success') {
+                wp_send_json_success($result);
+            } else {
+                wp_send_json_error($result);
+            }
+        } catch (\Exception $e) {
+            error_log('BlitzCDN: AJAX reconnect WooCommerce exception: ' . $e->getMessage());
+            wp_send_json_error(['message' => 'Exception: ' . $e->getMessage()]);
         }
     }
 }
