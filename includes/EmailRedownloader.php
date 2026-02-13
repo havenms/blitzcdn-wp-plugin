@@ -776,19 +776,19 @@ class EmailRedownloader {
             $result['variations_updated'] = $total_variations_updated;
             $result['galleries_updated'] = $total_galleries_updated;
             
-            // NEW: Scan and fix broken CDN URLs in attachment metadata (image sizes)
+            // Scan and fix broken CDN URLs in attachment metadata (image sizes)
+            // Run this on EVERY batch since we need to process all attachments
             $url_fixes = [];
             $attachments_with_broken_urls = 0;
             
-            // Only run URL scanning on first batch to avoid duplication
+            // Get Appwrite settings for URL reconstruction
+            $appwrite_client = new \BlitzCDN\AppwriteClient();
+            $endpoint = $appwrite_client->get_endpoint();
+            $bucket_id = $appwrite_client->get_bucket_id();
+            $project_id = $appwrite_client->get_project_id();
+            $cdn_domain = $appwrite_client->get_cdn_domain();
+            
             if ($offset === 0) {
-                // Get Appwrite settings for URL reconstruction
-                $appwrite_client = new \BlitzCDN\AppwriteClient();
-                $endpoint = $appwrite_client->get_endpoint();
-                $bucket_id = $appwrite_client->get_bucket_id();
-                $project_id = $appwrite_client->get_project_id();
-                $cdn_domain = $appwrite_client->get_cdn_domain();
-                
                 $url_fixes[] = [
                     'type' => 'info',
                     'message' => '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
@@ -807,43 +807,40 @@ class EmailRedownloader {
                     'type' => 'info',
                     'message' => 'Settings: Endpoint=' . ($endpoint ?: 'MISSING') . ', Bucket=' . ($bucket_id ?: 'MISSING') . ', Project=' . ($project_id ?: 'MISSING')
                 ];
-                
-                if ($endpoint && $bucket_id && $project_id) {
-                    // Get all attachments that have CDN metadata
-                    $cdn_attachments = $wpdb->get_results(
-                        "SELECT DISTINCT p.ID
-                        FROM {$wpdb->posts} p
-                        INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
-                        WHERE p.post_type = 'attachment'
-                        AND p.post_status = 'inherit'
-                        AND pm.meta_key = '_blitzcdn_file_id'
-                        AND pm.meta_value != ''
-                        LIMIT 200"
-                    );
-                    
+            }
+            
+            if ($endpoint && $bucket_id && $project_id) {
+                // Process the attachments in THIS batch (from $blitzcdn_attachments)
+                if ($offset === 0) {
                     $url_fixes[] = [
                         'type' => 'info',
-                        'message' => sprintf('📊 Found %d CDN attachments to scan', count($cdn_attachments))
+                        'message' => sprintf('📊 Processing batch of %d attachments (offset %d)', count($blitzcdn_attachments), $offset)
                     ];
                     $url_fixes[] = [
                         'type' => 'info',
                         'message' => ''
                     ];
+                }
                     
-                    $checked_count = 0;
-                    foreach ($cdn_attachments as $attachment) {
+                $checked_count = 0;
+                foreach ($blitzcdn_attachments as $attachment) {
                         $checked_count++;
                         $attachment_fixed = false;
                         $size_fixes = 0;
                         $attachment_logs = [];
                         
-                        $attachment_logs[] = sprintf('[%d/%d] Checking Attachment #%d', $checked_count, count($cdn_attachments), $attachment->ID);
+                        // Only show detailed logs for first 5 attachments of first batch
+                        $verbose_attachment = ($offset === 0 && $checked_count <= 5);
+                        
+                        if ($verbose_attachment) {
+                            $attachment_logs[] = sprintf('[Batch %d] Checking Attachment #%d', floor($offset / $limit) + 1, $attachment->ID);
+                        }
                         
                         // Get attachment metadata
                         $metadata = wp_get_attachment_metadata($attachment->ID);
                         
-                        // DEBUG: Log raw metadata structure
-                        if ($checked_count <= 2) {
+                        // DEBUG: Log raw metadata structure (first 2 of first batch only)
+                        if ($offset === 0 && $checked_count <= 2) {
                             $attachment_logs[] = '  DEBUG: Metadata keys: ' . implode(', ', array_keys($metadata ?: []));
                             if (isset($metadata['sizes'])) {
                                 $attachment_logs[] = '  DEBUG: Size names: ' . implode(', ', array_keys($metadata['sizes']));
@@ -854,14 +851,16 @@ class EmailRedownloader {
                         $cdn_url = get_post_meta($attachment->ID, '_blitzcdn_cdn_url', true);
                         $guid = get_post_field('guid', $attachment->ID);
                         
-                        if (!empty($cdn_url)) {
-                            $attachment_logs[] = '  Main CDN URL: ' . $cdn_url;
-                        } else {
-                            $attachment_logs[] = '  ⚠ No _blitzcdn_cdn_url meta';
-                        }
-                        
-                        if (!empty($guid) && strpos($guid, 'storage/buckets') !== false) {
-                            $attachment_logs[] = '  GUID: ' . $guid;
+                        if ($verbose_attachment) {
+                            if (!empty($cdn_url)) {
+                                $attachment_logs[] = '  Main CDN URL: ' . $cdn_url;
+                            } else {
+                                $attachment_logs[] = '  ⚠ No _blitzcdn_cdn_url meta';
+                            }
+                            
+                            if (!empty($guid) && strpos($guid, 'storage/buckets') !== false) {
+                                $attachment_logs[] = '  GUID: ' . $guid;
+                            }
                         }
                         
                         if (!empty($cdn_url)) {
@@ -1086,17 +1085,19 @@ class EmailRedownloader {
                         
                         if ($attachment_fixed) {
                             $attachments_with_broken_urls++;
-                            // Log all attachment logs
-                            foreach ($attachment_logs as $log) {
-                                $url_fixes[] = [
-                                    'type' => 'success',
-                                    'message' => $log
-                                ];
+                            // Log all attachment logs if verbose OR if something was fixed
+                            if ($verbose_attachment || $size_fixes > 0) {
+                                foreach ($attachment_logs as $log) {
+                                    $url_fixes[] = [
+                                        'type' => 'success',
+                                        'message' => $log
+                                    ];
+                                }
+                                $url_fixes[] = ['type' => 'info', 'message' => '']; // spacing
                             }
-                            $url_fixes[] = ['type' => 'info', 'message' => '']; // spacing
                         } else {
-                            // Only log first 5 valid attachments to reduce noise
-                            if ($checked_count <= 5) {
+                            // Only log first 5 valid attachments of first batch
+                            if ($verbose_attachment) {
                                 foreach ($attachment_logs as $log) {
                                     $url_fixes[] = [
                                         'type' => 'info',
@@ -1108,32 +1109,24 @@ class EmailRedownloader {
                         }
                     }
                     
-                    // Flush cache
+                    // Flush cache after each batch
                     wp_cache_flush();
                     
-                    $url_fixes[] = [
-                        'type' => 'info',
-                        'message' => '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-                    ];
-                    
+                    // Summary for this batch
                     if ($attachments_with_broken_urls > 0) {
                         $url_fixes[] = [
                             'type' => 'success',
-                            'message' => sprintf('✅ Fixed broken URLs in %d attachments', $attachments_with_broken_urls)
-                        ];
-                    } else {
-                        $url_fixes[] = [
-                            'type' => 'info',
-                            'message' => '✓ No broken URLs found in attachment metadata'
+                            'message' => sprintf('✅ Batch %d: Fixed %d attachments', floor($offset / $limit) + 1, $attachments_with_broken_urls)
                         ];
                     }
                 } else {
-                    $url_fixes[] = [
-                        'type' => 'error',
-                        'message' => '❌ Cannot fix broken URLs - Missing settings: Endpoint=' . ($endpoint ?: 'NO') . ', Bucket=' . ($bucket_id ?: 'NO') . ', Project=' . ($project_id ?: 'NO')
-                    ];
+                    if ($offset === 0) {
+                        $url_fixes[] = [
+                            'type' => 'error',
+                            'message' => '❌ Cannot fix broken URLs - Missing settings: Endpoint=' . ($endpoint ?: 'NO') . ', Bucket=' . ($bucket_id ?: 'NO') . ', Project=' . ($project_id ?: 'NO')
+                        ];
+                    }
                 }
-            }
             
             $result['url_fixes'] = $url_fixes;
             $result['attachments_with_fixed_urls'] = $attachments_with_broken_urls;

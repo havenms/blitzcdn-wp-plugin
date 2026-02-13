@@ -391,6 +391,10 @@ class Migrator {
         if (!current_user_can('manage_options')) {
             wp_send_json_error('Unauthorized');
         }
+        
+        // Increase time limit for batch processing
+        @set_time_limit(300); // 5 minutes
+        @ini_set('memory_limit', '256M');
 
         $file_ids = isset($_POST['file_ids']) ? array_map('sanitize_text_field', $_POST['file_ids']) : [];
 

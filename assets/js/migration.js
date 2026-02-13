@@ -2047,7 +2047,8 @@ if (typeof jQuery === "undefined") {
 
       // Dynamic batch size based on mode
       // Link mode is much faster (no downloads), so use larger batches
-      var batchSize = mode === "link" ? 200 : 20;
+      // Reduced from 200 to 50 to avoid server timeouts
+      var batchSize = mode === "link" ? 50 : 20;
       var batch = emailFileIds.splice(0, batchSize);
       var action =
         mode === "link"
