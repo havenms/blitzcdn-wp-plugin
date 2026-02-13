@@ -929,17 +929,71 @@ class EmailRedownloader {
                             $attachment_logs[] = sprintf('  Checking %d image sizes...', count($metadata['sizes']));
                             
                             $size_count = 0;
+                            $sizes_need_cdn_url = 0;
+                            
                             foreach ($metadata['sizes'] as $size_name => &$size_data) {
                                 $size_count++;
                                 
                                 // Log first 2 sizes in detail for first 2 attachments (debugging)
                                 $verbose = ($checked_count <= 2 && $size_count <= 2);
                                 
-                                if (!empty($size_data['cdn_url'])) {
+                                // Check if size has cdn_url field at all
+                                if (empty($size_data['cdn_url'])) {
+                                    $sizes_need_cdn_url++;
+                                    
+                                    if ($verbose) {
+                                        $attachment_logs[] = sprintf('    Size "%s": ✗ MISSING cdn_url field', $size_name);
+                                    }
+                                    
+                                    // Get the file ID from main attachment
+                                    $file_id = get_post_meta($attachment->ID, '_blitzcdn_file_id', true);
+                                    
+                                    if ($file_id) {
+                                        // Build base CDN URL
+                                        $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                                        $base_url = rtrim($base_url, '/');
+                                        if (!preg_match('/^https?:\/\//', $base_url)) {
+                                            $base_url = 'https://' . $base_url;
+                                        }
+                                        if (!preg_match('/\/v1$/', $base_url)) {
+                                            $base_url .= '/v1';
+                                        }
+                                        
+                                        // Create proper CDN URL with dimensions
+                                        $base_cdn_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
+                                        
+                                        // Add width/height parameters
+                                        $width = isset($size_data['width']) ? intval($size_data['width']) : 0;
+                                        $height = isset($size_data['height']) ? intval($size_data['height']) : 0;
+                                        
+                                        $query_params = [];
+                                        if ($width > 0) {
+                                            $query_params['width'] = $width;
+                                        }
+                                        if ($height > 0) {
+                                            $query_params['height'] = $height;
+                                        }
+                                        $query_params['output'] = 'webp';
+                                        
+                                        $size_cdn_url = $base_cdn_url . '&' . http_build_query($query_params);
+                                        $size_data['cdn_url'] = $size_cdn_url;
+                                        $size_fixes++;
+                                        $attachment_fixed = true;
+                                        
+                                        if ($verbose) {
+                                            $attachment_logs[] = sprintf('      ✓ Generated: %s', substr($size_cdn_url, 0, 70) . '...');
+                                        }
+                                    } else {
+                                        if ($verbose) {
+                                            $attachment_logs[] = '      ✗ No file_id found';
+                                        }
+                                    }
+                                } else {
+                                    // Has cdn_url, check if it's broken
                                     $old_url = $size_data['cdn_url'];
                                     
                                     if ($verbose) {
-                                        $attachment_logs[] = sprintf('    Size "%s" URL: %s', $size_name, $old_url);
+                                        $attachment_logs[] = sprintf('    Size "%s" URL: %s', $size_name, substr($old_url, 0, 70) . '...');
                                     }
                                     
                                     $is_broken = false;
@@ -984,16 +1038,18 @@ class EmailRedownloader {
                                             $size_data['cdn_url'] = $new_url;
                                             $size_fixes++;
                                             $attachment_fixed = true;
-                                            $attachment_logs[] = sprintf('      ✓ Fixed to: %s', substr($new_url, 0, 80) . '...');
+                                            $attachment_logs[] = sprintf('      ✓ Fixed to: %s', substr($new_url, 0, 70) . '...');
                                         } else {
                                             $attachment_logs[] = '      ✗ Could not extract file ID';
                                         }
                                     } else if ($verbose) {
                                         $attachment_logs[] = sprintf('      ✓ Valid');
                                     }
-                                } else if ($verbose) {
-                                    $attachment_logs[] = sprintf('    Size "%s": No cdn_url field', $size_name);
                                 }
+                            }
+                            
+                            if ($sizes_need_cdn_url > 0 && !$verbose) {
+                                $attachment_logs[] = sprintf('    ⚠ %d sizes missing cdn_url field - generated URLs', $sizes_need_cdn_url);
                             }
                             
                             // Save metadata if any sizes were fixed
