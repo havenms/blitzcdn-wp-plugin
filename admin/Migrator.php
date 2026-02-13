@@ -581,22 +581,60 @@ class Migrator {
                 foreach ($urls_to_check as $url) {
                     if (empty($url)) continue;
 
-                    // Check if URL has storage/buckets but is missing /v1/
-                    if (preg_match('#/storage/buckets/#', $url) && !preg_match('#/v1/storage/buckets/#', $url)) {
-                        // Fix the URL by adding /v1/ before /storage
-                        $fixed_url = preg_replace('#(https?://[^/]+)(/storage/buckets/)#', '$1/v1$2', $url);
+                    // Check if URL is a CDN URL (has /storage/buckets/)
+                    if (preg_match('#/storage/buckets/#', $url)) {
+                        $is_broken = false;
                         
-                        if ($fixed_url !== $url) {
-                            $new_cdn_url = $fixed_url;
-                            $needs_update = true;
-                            $action_type = 'fixed';
-                            break;
+                        // Check 1: Missing /v1/ API version
+                        if (!preg_match('#/v1/storage/buckets/#', $url)) {
+                            $is_broken = true;
+                        }
+                        
+                        // Check 2: Missing /view endpoint (broken URLs have filenames instead)
+                        // Working URLs should have /view and project= in them
+                        if (!preg_match('#/view(\?|&)#', $url) || !preg_match('#project=#', $url)) {
+                            $is_broken = true;
+                        }
+                        
+                        if ($is_broken) {
+                            // Extract the file ID from the URL
+                            if (preg_match('#/files/([a-f0-9]+)(?:/|$)#', $url, $matches)) {
+                                $extracted_file_id = $matches[1];
+                                
+                                // Get Appwrite settings to reconstruct the URL properly
+                                $settings = get_option('blitzcdn_settings', []);
+                                $endpoint = $settings['endpoint'] ?? '';
+                                $bucket_id = $settings['bucket_id'] ?? '';
+                                $project_id = $settings['project_id'] ?? '';
+                                $cdn_domain = $settings['cdn_domain'] ?? '';
+                                
+                                if ($endpoint && $bucket_id && $project_id) {
+                                    $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                                    
+                                    // Ensure proper URL format
+                                    $base_url = rtrim($base_url, '/');
+                                    if (!preg_match('/^https?:\/\//', $base_url)) {
+                                        $base_url = 'https://' . $base_url;
+                                    }
+                                    
+                                    // Add /v1 if not present
+                                    if (!preg_match('/\/v1$/', $base_url)) {
+                                        $base_url .= '/v1';
+                                    }
+                                    
+                                    // Reconstruct the proper URL with /view?project=
+                                    $new_cdn_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $extracted_file_id . '/view?project=' . $project_id;
+                                    $needs_update = true;
+                                    $action_type = 'fixed';
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
 
-                // If we have a file_id but no proper CDN URL, reconstruct it
-                if (!$needs_update && !empty($file_id) && (empty($cdn_url) || !preg_match('#/v1/storage/buckets/#', $cdn_url))) {
+                // If we still don't have a valid URL but have a file_id from metadata, reconstruct it
+                if (!$needs_update && !empty($file_id)) {
                     // Get Appwrite settings to reconstruct the URL
                     $settings = get_option('blitzcdn_settings', []);
                     $endpoint = $settings['endpoint'] ?? '';
