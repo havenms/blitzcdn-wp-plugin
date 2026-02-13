@@ -550,18 +550,24 @@ class Migrator {
             );
 
             // Get batch of attachments with BlitzCDN URLs and also check GUIDs
+            // Order by potentially broken URLs first (those missing /view or project=)
             $results = $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT p.ID, 
                             pm_url.meta_value as cdn_url,
                             p.guid as post_guid,
-                            pm_file_id.meta_value as file_id
+                            pm_file_id.meta_value as file_id,
+                            CASE 
+                                WHEN (pm_url.meta_value NOT LIKE '%%/view%%' OR pm_url.meta_value NOT LIKE '%%project=%%') THEN 1
+                                WHEN (p.guid NOT LIKE '%%/view%%' OR p.guid NOT LIKE '%%project=%%') THEN 1
+                                ELSE 2
+                            END as priority
                     FROM {$wpdb->posts} p
                     LEFT JOIN {$wpdb->postmeta} pm_url ON p.ID = pm_url.post_id AND pm_url.meta_key = '_blitzcdn_cdn_url'
                     LEFT JOIN {$wpdb->postmeta} pm_file_id ON p.ID = pm_file_id.post_id AND pm_file_id.meta_key = '_blitzcdn_file_id'
                     WHERE p.post_type = 'attachment'
                     AND (pm_url.meta_value != '' OR pm_file_id.meta_value != '' OR p.guid LIKE '%%storage/buckets%%')
-                    ORDER BY p.ID DESC
+                    ORDER BY priority ASC, p.ID DESC
                     LIMIT %d OFFSET %d",
                     $limit,
                     $offset
