@@ -584,6 +584,44 @@ class Settings
                 </div>
             <?php endif; ?>
         </div>
+
+        <!-- WooCommerce Image Reconnection Section -->
+        <div class="wrap" style="max-width: 1200px; margin-top: 40px; padding: 20px; background: #fff; border: 1px solid #ddd; border-radius: 4px;">
+            <h2>🛒 Fix WooCommerce Product Images</h2>
+            <p>If you already have media in your library linked to CDN, but WooCommerce products still show broken images, 
+            use this tool to reconnect existing CDN attachments to products.</p>
+            
+            <div style="background: #e7f3ff; border-left: 4px solid #2271b1; padding: 12px; margin: 20px 0; border-radius: 4px;">
+                <p style="margin: 0; color: #333;">
+                    <strong>ℹ️ What this does:</strong><br>
+                    Scans all CDN-linked attachments in your media library and updates WooCommerce products to use the correct attachment IDs.
+                    This fixes featured images, gallery images, and product variation images.
+                </p>
+            </div>
+
+            <p>
+                <button type="button" id="blitzcdn-reconnect-woocommerce-btn" class="button button-primary"
+                    data-nonce="<?php echo wp_create_nonce('blitzcdn_migration_nonce'); ?>"
+                    data-ajax-url="<?php echo admin_url('admin-ajax.php'); ?>">
+                    Reconnect WooCommerce Images
+                </button>
+            </p>
+
+            <div id="blitzcdn-reconnect-woocommerce-status" style="margin-top: 20px; display: none;">
+                <div style="background: #d4edda; border-left: 4px solid #28a745; padding: 12px; border-radius: 4px;">
+                    <div id="blitzcdn-reconnect-woocommerce-message" style="font-weight: 500; color: #155724;"></div>
+                    <div id="blitzcdn-reconnect-woocommerce-stats" style="margin-top: 10px; color: #155724;"></div>
+                </div>
+            </div>
+
+            <div id="blitzcdn-reconnect-woocommerce-error" style="margin-top: 20px; display: none;">
+                <div style="background: #f8d7da; border-left: 4px solid #dc3545; padding: 12px; border-radius: 4px;">
+                    <div style="font-weight: 500; color: #721c24;">❌ Error</div>
+                    <div id="blitzcdn-reconnect-woocommerce-error-message" style="margin-top: 5px; color: #721c24;"></div>
+                </div>
+            </div>
+        </div>
+
         <?php
     }
 

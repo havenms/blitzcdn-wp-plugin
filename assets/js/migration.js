@@ -2374,5 +2374,72 @@ if (typeof jQuery === "undefined") {
         checkBackgroundLinkStatus();
       },
     );
+
+    // WooCommerce Image Reconnection
+    $(document).on(
+      "click",
+      "#blitzcdn-reconnect-woocommerce-btn",
+      function (e) {
+        e.preventDefault();
+
+        var $btn = $(this);
+        var $status = $("#blitzcdn-reconnect-woocommerce-status");
+        var $error = $("#blitzcdn-reconnect-woocommerce-error");
+        var $message = $("#blitzcdn-reconnect-woocommerce-message");
+        var $stats = $("#blitzcdn-reconnect-woocommerce-stats");
+        var $errorMessage = $("#blitzcdn-reconnect-woocommerce-error-message");
+
+        // Hide previous results
+        $status.hide();
+        $error.hide();
+
+        // Disable button
+        $btn.prop("disabled", true).text("Processing...");
+
+        ajaxPost(
+          {
+            action: "blitzcdn_reconnect_woocommerce",
+          },
+          function (response) {
+            $btn.prop("disabled", false).text("Reconnect WooCommerce Images");
+
+            if (response.success && response.data) {
+              var data = response.data;
+              $message.text(data.message || "Processing complete");
+
+              var statsHtml = "";
+              statsHtml +=
+                "<strong>Attachments scanned:</strong> " +
+                (data.attachments_scanned || 0) +
+                "<br>";
+              statsHtml +=
+                "<strong>Products updated:</strong> " +
+                (data.products_updated || 0) +
+                "<br>";
+              statsHtml +=
+                "<strong>Variations updated:</strong> " +
+                (data.variations_updated || 0) +
+                "<br>";
+              statsHtml +=
+                "<strong>Galleries updated:</strong> " +
+                (data.galleries_updated || 0);
+
+              $stats.html(statsHtml);
+              $status.fadeIn();
+            } else {
+              $errorMessage.text(
+                response.data?.message || "Unknown error occurred",
+              );
+              $error.fadeIn();
+            }
+          },
+          function (error) {
+            $btn.prop("disabled", false).text("Reconnect WooCommerce Images");
+            $errorMessage.text(error.message || "Request failed");
+            $error.fadeIn();
+          },
+        );
+      },
+    );
   });
 }

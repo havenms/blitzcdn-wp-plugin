@@ -36,6 +36,9 @@ class Migrator {
         add_action('wp_ajax_blitzcdn_stop_background_link', [$this, 'ajax_stop_background_link']);
         add_action('wp_ajax_blitzcdn_get_background_link_status', [$this, 'ajax_get_background_link_status']);
 
+        // WooCommerce reconnection action
+        add_action('wp_ajax_blitzcdn_reconnect_woocommerce', [$this, 'ajax_reconnect_woocommerce']);
+
         // Zip Migration Actions - delegate to proxy methods to avoid circular dependency
         add_action('wp_ajax_blitzcdn_start_zip_migration', [$this, 'ajax_start_zip_migration_proxy']);
         add_action('wp_ajax_blitzcdn_continue_zip_migration', [$this, 'ajax_continue_zip_migration_proxy']);
@@ -463,5 +466,22 @@ class Migrator {
         $status = $background_linker->get_status();
 
         wp_send_json_success($status);
+    }
+
+    public function ajax_reconnect_woocommerce() {
+        check_ajax_referer('blitzcdn_migration_nonce', 'nonce');
+
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error('Unauthorized');
+        }
+
+        $email_redownloader = Core::get_instance()->get_email_redownloader();
+        $result = $email_redownloader->reconnect_woocommerce_images();
+
+        if ($result['status'] === 'success') {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error($result);
+        }
     }
 }

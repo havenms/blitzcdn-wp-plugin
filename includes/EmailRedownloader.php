@@ -445,6 +445,227 @@ class EmailRedownloader {
     }
 
     /**
+     * Find any WordPress attachment (even deleted/trash) by filename.
+     * Used to find old attachment IDs that WooCommerce products might still reference.
+     *
+     * @param string $filename The filename to search for
+     * @return int|false Attachment ID if found, false otherwise
+     */
+    private function find_attachment_by_filename_including_deleted($filename) {
+        global $wpdb;
+        
+        // Search for ANY attachment with this filename, regardless of status
+        // Exclude only if it already has BlitzCDN metadata (already linked)
+        $query = $wpdb->prepare(
+            "SELECT p.ID FROM {$wpdb->posts} p
+            INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+            WHERE p.post_type = 'attachment'
+            AND pm.meta_key = '_wp_attached_file'
+            AND pm.meta_value LIKE %s
+            AND NOT EXISTS (
+                SELECT 1 FROM {$wpdb->postmeta} pm2
+                WHERE pm2.post_id = p.ID
+                AND pm2.meta_key IN ('_blitzcdn_file_id', '_blitzcdn_cdn_url')
+            )
+            ORDER BY p.post_status = 'inherit' DESC, p.ID DESC
+            LIMIT 1",
+            '%' . $wpdb->esc_like($filename)
+        );
+        
+        $attachment_id = $wpdb->get_var($query);
+        
+        return $attachment_id ? (int) $attachment_id : false;
+    }
+
+    /**
+     * Update WooCommerce products to use new attachment ID instead of old one.
+     * Updates featured images, gallery images, and variation images.
+     *
+     * @param int $old_attachment_id Old attachment ID being replaced
+     * @param int $new_attachment_id New attachment ID to use
+     * @return array {
+     *     @type int $products_updated Number of products updated
+     *     @type int $variations_updated Number of variations updated
+     *     @type int $galleries_updated Number of gallery updates
+     * }
+     */
+    private function update_woocommerce_product_images($old_attachment_id, $new_attachment_id) {
+        global $wpdb;
+        
+        $stats = [
+            'products_updated' => 0,
+            'variations_updated' => 0,
+            'galleries_updated' => 0
+        ];
+        
+        // 1. Update featured/thumbnail images (_thumbnail_id)
+        $updated = $wpdb->update(
+            $wpdb->postmeta,
+            ['meta_value' => $new_attachment_id],
+            [
+                'meta_key' => '_thumbnail_id',
+                'meta_value' => $old_attachment_id
+            ],
+            ['%d'],
+            ['%s', '%d']
+        );
+        
+        if ($updated) {
+            $stats['products_updated'] = $updated;
+            
+            // Clear product cache for updated products
+            $product_ids = $wpdb->get_col($wpdb->prepare(
+                "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = '_thumbnail_id' AND meta_value = %d",
+                $new_attachment_id
+            ));
+            foreach ($product_ids as $product_id) {
+                clean_post_cache($product_id);
+            }
+        }
+        
+        // 2. Update product galleries (_product_image_gallery)
+        // Gallery is stored as comma-separated attachment IDs
+        $gallery_results = $wpdb->get_results($wpdb->prepare(
+            "SELECT post_id, meta_value FROM {$wpdb->postmeta} 
+            WHERE meta_key = '_product_image_gallery' 
+            AND meta_value LIKE %s",
+            '%' . $old_attachment_id . '%'
+        ));
+        
+        foreach ($gallery_results as $row) {
+            $gallery_ids = explode(',', $row->meta_value);
+            $updated_gallery = [];
+            $changed = false;
+            
+            foreach ($gallery_ids as $id) {
+                $id = trim($id);
+                if ($id == $old_attachment_id) {
+                    $updated_gallery[] = $new_attachment_id;
+                    $changed = true;
+                } else {
+                    $updated_gallery[] = $id;
+                }
+            }
+            
+            if ($changed) {
+                update_post_meta($row->post_id, '_product_image_gallery', implode(',', $updated_gallery));
+                clean_post_cache($row->post_id);
+                $stats['galleries_updated']++;
+            }
+        }
+        
+        // 3. Update variation images (variations are child posts of products)
+        $variation_updated = $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            SET pm.meta_value = %d
+            WHERE p.post_type = 'product_variation'
+            AND pm.meta_key = '_thumbnail_id'
+            AND pm.meta_value = %d",
+            $new_attachment_id,
+            $old_attachment_id
+        ));
+        
+        if ($variation_updated) {
+            $stats['variations_updated'] = $variation_updated;
+        }
+        
+        return $stats;
+    }
+
+    /**
+     * Reconnect existing CDN attachments to WooCommerce products.
+     * Scans all BlitzCDN attachments in media library and updates WooCommerce products
+     * that might still reference old attachment IDs.
+     *
+     * @return array {
+     *     @type string $status 'success' or 'error'
+     *     @type string $message Status message
+     *     @type int    $attachments_scanned Number of attachments scanned
+     *     @type int    $products_updated Number of products updated
+     *     @type int    $variations_updated Number of variations updated
+     *     @type int    $galleries_updated Number of galleries updated
+     * }
+     */
+    public function reconnect_woocommerce_images() {
+        global $wpdb;
+        
+        $result = [
+            'status' => 'error',
+            'message' => '',
+            'attachments_scanned' => 0,
+            'products_updated' => 0,
+            'variations_updated' => 0,
+            'galleries_updated' => 0
+        ];
+        
+        // Get all attachments that have BlitzCDN metadata
+        $blitzcdn_attachments = $wpdb->get_results(
+            "SELECT DISTINCT p.ID, pm_file.meta_value as filename
+            FROM {$wpdb->posts} p
+            INNER JOIN {$wpdb->postmeta} pm_blitz ON p.ID = pm_blitz.post_id
+            LEFT JOIN {$wpdb->postmeta} pm_file ON p.ID = pm_file.post_id AND pm_file.meta_key = '_wp_attached_file'
+            WHERE p.post_type = 'attachment'
+            AND p.post_status = 'inherit'
+            AND pm_blitz.meta_key = '_blitzcdn_file_id'
+            AND pm_blitz.meta_value != ''
+            ORDER BY p.ID DESC"
+        );
+        
+        if (empty($blitzcdn_attachments)) {
+            $result['status'] = 'success';
+            $result['message'] = 'No CDN attachments found';
+            return $result;
+        }
+        
+        $total_products_updated = 0;
+        $total_variations_updated = 0;
+        $total_galleries_updated = 0;
+        
+        foreach ($blitzcdn_attachments as $attachment) {
+            $result['attachments_scanned']++;
+            
+            // Get just the filename (not the full path)
+            $filename = basename($attachment->filename);
+            
+            if (empty($filename)) {
+                continue;
+            }
+            
+            // Find any old attachments with the same filename (but without BlitzCDN metadata)
+            $old_attachment_id = $this->find_attachment_by_filename_including_deleted($filename);
+            
+            if ($old_attachment_id && $old_attachment_id != $attachment->ID) {
+                // Update WooCommerce products to use the new attachment ID
+                $stats = $this->update_woocommerce_product_images($old_attachment_id, $attachment->ID);
+                
+                $total_products_updated += $stats['products_updated'];
+                $total_variations_updated += $stats['variations_updated'];
+                $total_galleries_updated += $stats['galleries_updated'];
+            }
+        }
+        
+        $result['products_updated'] = $total_products_updated;
+        $result['variations_updated'] = $total_variations_updated;
+        $result['galleries_updated'] = $total_galleries_updated;
+        
+        if ($total_products_updated > 0 || $total_variations_updated > 0 || $total_galleries_updated > 0) {
+            $result['status'] = 'success';
+            $result['message'] = sprintf(
+                'Updated %d products, %d variations, and %d galleries',
+                $total_products_updated,
+                $total_variations_updated,
+                $total_galleries_updated
+            );
+        } else {
+            $result['status'] = 'success';
+            $result['message'] = 'No WooCommerce products needed updating';
+        }
+        
+        return $result;
+    }
+
+    /**
      * Convert a local WordPress attachment to use CDN URL.
      *
      * @param int    $attachment_id WordPress attachment ID
@@ -684,10 +905,19 @@ class EmailRedownloader {
             return $result;
         }
 
+        // Check if there's an old (possibly deleted) attachment with same filename
+        // This handles the case where files were deleted during hack but WooCommerce still references them
+        $old_attachment_id = $this->find_attachment_by_filename_including_deleted($file_name);
+
         // Create new WordPress attachment pointing to CDN URL
         $attachment_id = $this->create_virtual_attachment($file_id, $file_name, $cdn_url);
         
         if ($attachment_id) {
+            // If there was an old attachment, update WooCommerce products to use new attachment ID
+            if ($old_attachment_id) {
+                $this->update_woocommerce_product_images($old_attachment_id, $attachment_id);
+            }
+            
             // Rewrite URLs in content after successful creation
             if ($this->rewrite_urls) {
                 $this->rewrite_file_urls_in_content($file_name, $cdn_url);
