@@ -736,15 +736,58 @@ class Migrator {
                     $metadata = wp_get_attachment_metadata($attachment->ID);
                     if (!empty($metadata['sizes'])) {
                         $sizes_fixed = 0;
+                        $sizes_details = [];
+                        
+                        // Get settings for reconstruction
+                        $settings = get_option('blitzcdn_settings', []);
+                        $endpoint = $settings['endpoint'] ?? '';
+                        $bucket_id = $settings['bucket_id'] ?? '';
+                        $project_id = $settings['project_id'] ?? '';
+                        $cdn_domain = $settings['cdn_domain'] ?? '';
+                        
                         foreach ($metadata['sizes'] as $size_name => &$size_data) {
                             if (!empty($size_data['cdn_url'])) {
-                                $size_data['cdn_url'] = preg_replace('#(https?://[^/]+)(/storage/buckets/)#', '$1/v1$2', $size_data['cdn_url']);
-                                $sizes_fixed++;
+                                $old_size_url = $size_data['cdn_url'];
+                                $is_size_broken = false;
+                                
+                                // Check if this size URL is broken (same checks as main URL)
+                                if (preg_match('#/storage/buckets/#', $old_size_url)) {
+                                    // Check for missing /v1/ or missing /view endpoint or missing project=
+                                    if (!preg_match('#/v1/storage/buckets/#', $old_size_url) || 
+                                        !preg_match('#/view(\?|&)#', $old_size_url) || 
+                                        !preg_match('#project=#', $old_size_url)) {
+                                        $is_size_broken = true;
+                                    }
+                                }
+                                
+                                if ($is_size_broken && $endpoint && $bucket_id && $project_id) {
+                                    // Extract file ID from the broken size URL
+                                    if (preg_match('#/files/([a-f0-9]+)(?:/|$)#', $old_size_url, $matches)) {
+                                        $size_file_id = $matches[1];
+                                        
+                                        $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                                        $base_url = rtrim($base_url, '/');
+                                        if (!preg_match('/^https?:\/\//', $base_url)) {
+                                            $base_url = 'https://' . $base_url;
+                                        }
+                                        if (!preg_match('/\/v1$/', $base_url)) {
+                                            $base_url .= '/v1';
+                                        }
+                                        
+                                        // Reconstruct the proper URL for this size
+                                        $size_data['cdn_url'] = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $size_file_id . '/view?project=' . $project_id;
+                                        $sizes_fixed++;
+                                        $sizes_details[] = $size_name . ': ' . basename($old_size_url) . ' → reconstructed';
+                                    }
+                                } else if ($is_size_broken) {
+                                    $sizes_details[] = $size_name . ': BROKEN but missing settings';
+                                }
                             }
                         }
-                        wp_update_attachment_metadata($attachment->ID, $metadata);
+                        
                         if ($sizes_fixed > 0) {
-                            $log_entry['checks'][] = '✓ Fixed ' . $sizes_fixed . ' image size URLs';
+                            wp_update_attachment_metadata($attachment->ID, $metadata);
+                            $log_entry['checks'][] = '✓ Fixed ' . $sizes_fixed . ' image size URLs: ' . implode(', ', $sizes_details);
                         }
                     }
                     
@@ -761,19 +804,100 @@ class Migrator {
                     
                     $fixed_count++;
                 } else {
-                    $already_correct++;
-                    
-                    if (empty($urls_to_check)) {
-                        $log_entry['checks'][] = '⚠ No URLs found to check';
+                    // Main URL is correct, but check if image size URLs need fixing
+                    $metadata = wp_get_attachment_metadata($attachment->ID);
+                    if (!empty($metadata['sizes'])) {
+                        $sizes_fixed = 0;
+                        $sizes_details = [];
+                        
+                        // Get settings for reconstruction
+                        $settings = get_option('blitzcdn_settings', []);
+                        $endpoint = $settings['endpoint'] ?? '';
+                        $bucket_id = $settings['bucket_id'] ?? '';
+                        $project_id = $settings['project_id'] ?? '';
+                        $cdn_domain = $settings['cdn_domain'] ?? '';
+                        
+                        foreach ($metadata['sizes'] as $size_name => &$size_data) {
+                            if (!empty($size_data['cdn_url'])) {
+                                $old_size_url = $size_data['cdn_url'];
+                                $is_size_broken = false;
+                                
+                                // Check if this size URL is broken (same checks as main URL)
+                                if (preg_match('#/storage/buckets/#', $old_size_url)) {
+                                    // Check for missing /v1/ or missing /view endpoint or missing project=
+                                    if (!preg_match('#/v1/storage/buckets/#', $old_size_url) || 
+                                        !preg_match('#/view(\?|&)#', $old_size_url) || 
+                                        !preg_match('#project=#', $old_size_url)) {
+                                        $is_size_broken = true;
+                                    }
+                                }
+                                
+                                if ($is_size_broken && $endpoint && $bucket_id && $project_id) {
+                                    // Extract file ID from the broken size URL
+                                    if (preg_match('#/files/([a-f0-9]+)(?:/|$)#', $old_size_url, $matches)) {
+                                        $size_file_id = $matches[1];
+                                        
+                                        $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                                        $base_url = rtrim($base_url, '/');
+                                        if (!preg_match('/^https?:\/\//', $base_url)) {
+                                            $base_url = 'https://' . $base_url;
+                                        }
+                                        if (!preg_match('/\/v1$/', $base_url)) {
+                                            $base_url .= '/v1';
+                                        }
+                                        
+                                        // Reconstruct the proper URL for this size
+                                        $size_data['cdn_url'] = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $size_file_id . '/view?project=' . $project_id;
+                                        $sizes_fixed++;
+                                        $sizes_details[] = $size_name . ': ' . basename($old_size_url) . ' → view endpoint';
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if ($sizes_fixed > 0) {
+                            wp_update_attachment_metadata($attachment->ID, $metadata);
+                            $log_entry['checks'][] = '🔧 Main URL correct but fixed ' . $sizes_fixed . ' broken image sizes: ' . implode(', ', $sizes_details);
+                            $fixed_count++;
+                            
+                            // Add to processed URLs log as a fix
+                            $processed_urls[] = [
+                                'id' => $attachment->ID,
+                                'old_url' => $old_url,
+                                'new_url' => $old_url . ' (sizes fixed)',
+                                'action' => 'fixed',
+                                'log' => implode(' | ', $log_entry['checks'])
+                            ];
+                        } else {
+                            $already_correct++;
+                            
+                            if (empty($urls_to_check)) {
+                                $log_entry['checks'][] = '⚠ No URLs found to check';
+                            }
+                            
+                            // Add to log as already correct
+                            $processed_urls[] = [
+                                'id' => $attachment->ID,
+                                'url' => $old_url,
+                                'action' => 'correct',
+                                'log' => implode(' | ', $log_entry['checks'])
+                            ];
+                        }
+                    } else {
+                        $already_correct++;
+                        
+                        if (empty($urls_to_check)) {
+                            $log_entry['checks'][] = '⚠ No URLs found to check';
+                        }
+                        
+                        // Add to log as already correct
+                        $processed_urls[] = [
+                            'id' => $attachment->ID,
+                            'url' => $old_url,
+                            'action' => 'correct',
+                            'log' => implode(' | ', $log_entry['checks'])
+                        ];
                     }
-                    
-                    // Add to log as already correct
-                    $processed_urls[] = [
-                        'id' => $attachment->ID,
-                        'url' => $old_url,
-                        'action' => 'correct',
-                        'log' => implode(' | ', $log_entry['checks'])
-                    ];
                 }
             }
 
