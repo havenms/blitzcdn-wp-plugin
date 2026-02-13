@@ -1055,8 +1055,24 @@ class EmailRedownloader {
                             // Save metadata if any sizes were fixed
                             if ($size_fixes > 0) {
                                 wp_update_attachment_metadata($attachment->ID, $metadata);
+                                
+                                // ALSO save to _blitzcdn_sizes for the URL rewriter
+                                $blitzcdn_sizes = [];
+                                foreach ($metadata['sizes'] as $size_name => $size_data) {
+                                    if (!empty($size_data['cdn_url'])) {
+                                        $blitzcdn_sizes[$size_name] = [
+                                            'url' => $size_data['cdn_url'],
+                                            'width' => isset($size_data['width']) ? $size_data['width'] : 0,
+                                            'height' => isset($size_data['height']) ? $size_data['height'] : 0
+                                        ];
+                                    }
+                                }
+                                if (!empty($blitzcdn_sizes)) {
+                                    update_post_meta($attachment->ID, '_blitzcdn_sizes', $blitzcdn_sizes);
+                                }
+                                
                                 clean_post_cache($attachment->ID);
-                                $attachment_logs[] = sprintf('  💾 Saved %d fixed image sizes', $size_fixes);
+                                $attachment_logs[] = sprintf('  💾 Saved %d fixed image sizes to metadata and _blitzcdn_sizes', $size_fixes);
                                 
                                 if (!$attachment_fixed) {
                                     $attachment_fixed = true;
