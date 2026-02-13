@@ -2498,6 +2498,17 @@ if (typeof jQuery === "undefined") {
                     "success",
                   );
                 }
+                
+                // Log URL fixes if available (first batch only)
+                if (data.url_fixes && data.url_fixes.length > 0) {
+                  addLog("─────────────────────────────", "info");
+                  addLog("🔧 Broken URL Fixes:", "info");
+                  data.url_fixes.forEach(function(fix) {
+                    var logType = fix.type || "info";
+                    addLog(fix.message, logType);
+                  });
+                  addLog("─────────────────────────────", "info");
+                }
 
                 // Check if there are more batches to process
                 if (data.has_more) {
@@ -2527,6 +2538,14 @@ if (typeof jQuery === "undefined") {
                     "Total galleries updated: " + totalStats.galleries_updated,
                     "success",
                   );
+                  
+                  // Show URL fixes count if available
+                  if (data.products_with_fixed_urls) {
+                    addLog(
+                      "Products with fixed URLs: " + data.products_with_fixed_urls,
+                      "success",
+                    );
+                  }
 
                   $message.text(
                     "Processing complete - scanned " +
@@ -2550,6 +2569,12 @@ if (typeof jQuery === "undefined") {
                   statsHtml +=
                     "<strong>Galleries updated:</strong> " +
                     totalStats.galleries_updated;
+                  
+                  if (data.products_with_fixed_urls) {
+                    statsHtml +=
+                      "<br><strong>Products with fixed URLs:</strong> " +
+                      data.products_with_fixed_urls;
+                  }
 
                   $stats.html(statsHtml);
                   $status.fadeIn();

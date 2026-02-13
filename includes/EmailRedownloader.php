@@ -776,6 +776,124 @@ class EmailRedownloader {
             $result['variations_updated'] = $total_variations_updated;
             $result['galleries_updated'] = $total_galleries_updated;
             
+            // NEW: Also scan and fix broken CDN URLs in product content/metadata
+            $url_fixes = [];
+            $products_with_broken_urls = 0;
+            
+            // Only run URL scanning on first batch to avoid duplication
+            if ($offset === 0) {
+                // Get Appwrite settings for URL reconstruction
+                $appwrite_client = new \BlitzCDN\AppwriteClient();
+                $endpoint = $appwrite_client->get_endpoint();
+                $bucket_id = $appwrite_client->get_bucket_id();
+                $project_id = $appwrite_client->get_project_id();
+                $cdn_domain = $appwrite_client->get_cdn_domain();
+                
+                if ($endpoint && $bucket_id && $project_id) {
+                    $url_fixes[] = [
+                        'type' => 'info',
+                        'message' => 'Scanning WooCommerce products for broken CDN URLs...'
+                    ];
+                    
+                    // Find all products with potential broken CDN URLs in content
+                    $products_with_urls = $wpdb->get_results(
+                        "SELECT ID, post_content, post_type 
+                        FROM {$wpdb->posts} 
+                        WHERE post_type IN ('product', 'product_variation')
+                        AND post_content LIKE '%storage/buckets%' 
+                        AND post_status IN ('publish', 'draft', 'pending', 'private')
+                        LIMIT 50"
+                    );
+                    
+                    foreach ($products_with_urls as $product) {
+                        $original_content = $product->post_content;
+                        $updated_content = $original_content;
+                        $url_changes = 0;
+                        
+                        // Pattern 1: URLs with filenames at the end
+                        $pattern = '#(https?://[^/]+/v1/storage/buckets/[^/]+/files/([a-f0-9]+))/[^/\s"\'\)]+\.(jpg|jpeg|png|gif|webp|svg)#i';
+                        
+                        if (preg_match_all($pattern, $original_content, $matches, PREG_SET_ORDER)) {
+                            foreach ($matches as $match) {
+                                $broken_url = $match[0];
+                                $file_id = $match[2];
+                                
+                                $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                                $base_url = rtrim($base_url, '/');
+                                if (!preg_match('/^https?:\/\//', $base_url)) {
+                                    $base_url = 'https://' . $base_url;
+                                }
+                                if (!preg_match('/\/v1$/', $base_url)) {
+                                    $base_url .= '/v1';
+                                }
+                                
+                                $correct_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
+                                $updated_content = str_replace($broken_url, $correct_url, $updated_content);
+                                $url_changes++;
+                            }
+                        }
+                        
+                        // Pattern 2: URLs missing /view and project=
+                        $pattern2 = '#(https?://[^/]+)/v1/storage/buckets/([^/]+)/files/([a-f0-9]+)(?!/view)([^\s"\'\)]*?)(?=["\s\)])#i';
+                        if (preg_match_all($pattern2, $updated_content, $matches2, PREG_SET_ORDER)) {
+                            foreach ($matches2 as $match) {
+                                $broken_url = $match[0];
+                                $file_id = $match[3];
+                                
+                                $base_url = !empty($cdn_domain) ? $cdn_domain : $endpoint;
+                                $base_url = rtrim($base_url, '/');
+                                if (!preg_match('/^https?:\/\//', $base_url)) {
+                                    $base_url = 'https://' . $base_url;
+                                }
+                                if (!preg_match('/\/v1$/', $base_url)) {
+                                    $base_url .= '/v1';
+                                }
+                                
+                                $correct_url = $base_url . '/storage/buckets/' . $bucket_id . '/files/' . $file_id . '/view?project=' . $project_id;
+                                $updated_content = str_replace($broken_url, $correct_url, $updated_content);
+                                $url_changes++;
+                            }
+                        }
+                        
+                        if ($url_changes > 0 && $updated_content !== $original_content) {
+                            $wpdb->update(
+                                $wpdb->posts,
+                                ['post_content' => $updated_content],
+                                ['ID' => $product->ID],
+                                ['%s'],
+                                ['%d']
+                            );
+                            $products_with_broken_urls++;
+                            
+                            $url_fixes[] = [
+                                'type' => 'success',
+                                'message' => sprintf('Fixed %d broken URLs in %s #%d', $url_changes, $product->post_type, $product->ID)
+                            ];
+                        }
+                    }
+                    
+                    if ($products_with_broken_urls > 0) {
+                        $url_fixes[] = [
+                            'type' => 'success',
+                            'message' => sprintf('✅ Fixed broken URLs in %d products', $products_with_broken_urls)
+                        ];
+                    } else {
+                        $url_fixes[] = [
+                            'type' => 'info',
+                            'message' => '✓ No broken URLs found in product content'
+                        ];
+                    }
+                } else {
+                    $url_fixes[] = [
+                        'type' => 'warning',
+                        'message' => '⚠ Cannot fix broken URLs - Appwrite settings not configured'
+                    ];
+                }
+            }
+            
+            $result['url_fixes'] = $url_fixes;
+            $result['products_with_fixed_urls'] = $products_with_broken_urls;
+            
             // Check if there are more attachments to process
             $next_offset = $offset + $limit;
             $result['has_more'] = ($next_offset < $total_count);
