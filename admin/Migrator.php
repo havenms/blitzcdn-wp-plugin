@@ -517,20 +517,38 @@ class Migrator {
 
         global $wpdb;
 
+        // Get offset and limit for batch processing
+        $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+        $limit = 50; // Process 50 attachments per batch
+
         try {
-            // Get all attachments with BlitzCDN URLs and also check GUIDs
-            $results = $wpdb->get_results(
-                "SELECT p.ID, 
-                        pm_url.meta_value as cdn_url,
-                        p.guid as post_guid,
-                        pm_file_id.meta_value as file_id
+            // Get total count first
+            $total_count = $wpdb->get_var(
+                "SELECT COUNT(DISTINCT p.ID)
                 FROM {$wpdb->posts} p
                 LEFT JOIN {$wpdb->postmeta} pm_url ON p.ID = pm_url.post_id AND pm_url.meta_key = '_blitzcdn_cdn_url'
                 LEFT JOIN {$wpdb->postmeta} pm_file_id ON p.ID = pm_file_id.post_id AND pm_file_id.meta_key = '_blitzcdn_file_id'
                 WHERE p.post_type = 'attachment'
-                AND (pm_url.meta_value != '' OR pm_file_id.meta_value != '' OR p.guid LIKE '%storage/buckets%')
-                ORDER BY p.ID DESC
-                LIMIT 100"
+                AND (pm_url.meta_value != '' OR pm_file_id.meta_value != '' OR p.guid LIKE '%storage/buckets%')"
+            );
+
+            // Get batch of attachments with BlitzCDN URLs and also check GUIDs
+            $results = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT p.ID, 
+                            pm_url.meta_value as cdn_url,
+                            p.guid as post_guid,
+                            pm_file_id.meta_value as file_id
+                    FROM {$wpdb->posts} p
+                    LEFT JOIN {$wpdb->postmeta} pm_url ON p.ID = pm_url.post_id AND pm_url.meta_key = '_blitzcdn_cdn_url'
+                    LEFT JOIN {$wpdb->postmeta} pm_file_id ON p.ID = pm_file_id.post_id AND pm_file_id.meta_key = '_blitzcdn_file_id'
+                    WHERE p.post_type = 'attachment'
+                    AND (pm_url.meta_value != '' OR pm_file_id.meta_value != '' OR p.guid LIKE '%%storage/buckets%%')
+                    ORDER BY p.ID DESC
+                    LIMIT %d OFFSET %d",
+                    $limit,
+                    $offset
+                )
             );
 
             $fixed_count = 0;
@@ -543,13 +561,13 @@ class Migrator {
                 $post_guid = $attachment->post_guid;
                 $file_id = $attachment->file_id;
                 
-                // Collect sample URLs for debugging
-                if (count($sample_urls) < 5) {
+                // Collect sample URLs for first batch only
+                if ($offset === 0 && count($sample_urls) < 3) {
                     $sample_urls[] = [
                         'id' => $attachment->ID,
-                        'cdn_url' => $cdn_url,
-                        'guid' => $post_guid,
-                        'file_id' => $file_id
+                        'cdn_url' => $cdn_url ?: 'none',
+                        'guid' => $post_guid ?: 'none',
+                        'file_id' => $file_id ?: 'none'
                     ];
                 }
 
@@ -630,12 +648,25 @@ class Migrator {
                 }
             }
 
+            // Check if there are more attachments to process
+            $next_offset = $offset + $limit;
+            $has_more = ($next_offset < $total_count);
+
             wp_send_json_success([
-                'message' => "Fixed {$fixed_count} URLs ({$reconstructed_count} reconstructed), {$already_correct} already correct",
+                'message' => sprintf(
+                    'Processed batch %d: %d fixed (%d reconstructed), %d already correct',
+                    floor($offset / $limit) + 1,
+                    $fixed_count,
+                    $reconstructed_count,
+                    $already_correct
+                ),
                 'fixed' => $fixed_count,
                 'already_correct' => $already_correct,
                 'reconstructed' => $reconstructed_count,
-                'total' => count($results),
+                'processed' => count($results),
+                'total_attachments' => (int)$total_count,
+                'has_more' => $has_more,
+                'next_offset' => $next_offset,
                 'sample_urls' => $sample_urls
             ]);
 

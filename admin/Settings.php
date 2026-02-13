@@ -605,6 +605,19 @@ class Settings
                 </button>
             </p>
 
+            <div id="blitzcdn-fix-urls-progress" style="margin-top: 20px; display: none;">
+                <div style="background: #f0f0f1; border: 1px solid #ccc; height: 20px; width: 100%; border-radius: 4px; overflow: hidden;">
+                    <div id="blitzcdn-fix-urls-progress-bar"
+                        style="background: linear-gradient(90deg, #2271b1, #3794ff); height: 100%; width: 0%; transition: width 0.3s ease;">
+                    </div>
+                </div>
+                <p id="blitzcdn-fix-urls-progress-text" style="margin-top: 10px; font-weight: 500;">Processing...</p>
+                
+                <div id="blitzcdn-fix-urls-log"
+                    style="max-height: 300px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; border: 1px solid #333; padding: 15px; margin-top: 15px; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; border-radius: 4px;">
+                </div>
+            </div>
+
             <div id="blitzcdn-fix-urls-status" style="margin-top: 15px; display: none; padding: 15px; border-radius: 4px; background: #d1f2eb; border: 1px solid #2e8b57;">
                 <p id="blitzcdn-fix-urls-message" style="margin: 0; color: #2e8b57; font-weight: 500;"></p>
                 <div id="blitzcdn-fix-urls-stats" style="margin-top: 10px; font-size: 14px; color: #2e8b57;"></div>
