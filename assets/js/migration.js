@@ -2383,6 +2383,10 @@ if (typeof jQuery === "undefined") {
         e.preventDefault();
 
         var $btn = $(this);
+        var $progress = $("#blitzcdn-reconnect-woocommerce-progress");
+        var $progressBar = $("#blitzcdn-reconnect-woocommerce-progress-bar");
+        var $progressText = $("#blitzcdn-reconnect-woocommerce-progress-text");
+        var $log = $("#blitzcdn-reconnect-woocommerce-log");
         var $status = $("#blitzcdn-reconnect-woocommerce-status");
         var $error = $("#blitzcdn-reconnect-woocommerce-error");
         var $message = $("#blitzcdn-reconnect-woocommerce-message");
@@ -2392,19 +2396,69 @@ if (typeof jQuery === "undefined") {
         // Hide previous results
         $status.hide();
         $error.hide();
+        $log.empty();
+
+        // Show progress
+        $progress.show();
+        $progressBar.css("width", "10%");
+        $progressText.text("Initializing...");
+
+        function addLog(msg, type) {
+          var color = "#d4d4d4"; // default
+          if (type === "success") color = "#4ec9b0";
+          else if (type === "error") color = "#f48771";
+          else if (type === "warning") color = "#ce9178";
+          else if (type === "info") color = "#569cd6";
+
+          var timestamp = new Date().toLocaleTimeString();
+          $log.append(
+            '<div style="color:' +
+              color +
+              '; margin-bottom: 4px;">[' +
+              timestamp +
+              "] " +
+              msg +
+              "</div>",
+          );
+          $log.scrollTop($log[0].scrollHeight);
+        }
 
         // Disable button
         $btn.prop("disabled", true).text("Processing...");
+
+        addLog("Starting WooCommerce image reconnection...", "info");
+        $progressBar.css("width", "30%");
+        $progressText.text("Scanning CDN attachments...");
 
         ajaxPost(
           {
             action: "blitzcdn_reconnect_woocommerce",
           },
           function (response) {
-            $btn.prop("disabled", false).text("Reconnect WooCommerce Images");
+            $progressBar.css("width", "100%");
+            $progressText.text("Complete!");
 
             if (response.success && response.data) {
               var data = response.data;
+
+              addLog("✓ Scan complete!", "success");
+              addLog(
+                "Attachments scanned: " + (data.attachments_scanned || 0),
+                "info",
+              );
+              addLog(
+                "Products updated: " + (data.products_updated || 0),
+                "success",
+              );
+              addLog(
+                "Variations updated: " + (data.variations_updated || 0),
+                "success",
+              );
+              addLog(
+                "Galleries updated: " + (data.galleries_updated || 0),
+                "success",
+              );
+
               $message.text(data.message || "Processing complete");
 
               var statsHtml = "";
@@ -2426,15 +2480,28 @@ if (typeof jQuery === "undefined") {
 
               $stats.html(statsHtml);
               $status.fadeIn();
+
+              setTimeout(function () {
+                $btn
+                  .prop("disabled", false)
+                  .text("Reconnect WooCommerce Images");
+              }, 1000);
             } else {
+              addLog(
+                "✗ Error: " +
+                  (response.data?.message || "Unknown error occurred"),
+                "error",
+              );
               $errorMessage.text(
                 response.data?.message || "Unknown error occurred",
               );
               $error.fadeIn();
+              $btn.prop("disabled", false).text("Reconnect WooCommerce Images");
             }
           },
           function (xhr, status, error) {
-            $btn.prop("disabled", false).text("Reconnect WooCommerce Images");
+            $progressBar.css("width", "100%");
+            $progressText.text("Failed!");
 
             var errorMsg = "Request failed";
 
@@ -2464,9 +2531,12 @@ if (typeof jQuery === "undefined") {
               errorMsg = "Request failed: " + status;
             }
 
+            addLog("✗ " + errorMsg, "error");
             console.error("WooCommerce reconnect error:", xhr, status, error);
+
             $errorMessage.text(errorMsg);
             $error.fadeIn();
+            $btn.prop("disabled", false).text("Reconnect WooCommerce Images");
           },
         );
       },

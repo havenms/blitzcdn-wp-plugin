@@ -607,6 +607,19 @@ class Settings
                 </button>
             </p>
 
+            <div id="blitzcdn-reconnect-woocommerce-progress" style="margin-top: 20px; display: none;">
+                <div style="background: #f0f0f1; border: 1px solid #ccc; height: 20px; width: 100%; border-radius: 4px; overflow: hidden;">
+                    <div id="blitzcdn-reconnect-woocommerce-progress-bar"
+                        style="background: linear-gradient(90deg, #2271b1, #3794ff); height: 100%; width: 0%; transition: width 0.3s ease;">
+                    </div>
+                </div>
+                <p id="blitzcdn-reconnect-woocommerce-progress-text" style="margin-top: 10px; font-weight: 500;">Processing...</p>
+                
+                <div id="blitzcdn-reconnect-woocommerce-log"
+                    style="max-height: 300px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; border: 1px solid #333; padding: 15px; margin-top: 15px; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; border-radius: 4px;">
+                </div>
+            </div>
+
             <div id="blitzcdn-reconnect-woocommerce-status" style="margin-top: 20px; display: none;">
                 <div style="background: #d4edda; border-left: 4px solid #28a745; padding: 12px; border-radius: 4px;">
                     <div id="blitzcdn-reconnect-woocommerce-message" style="font-weight: 500; color: #155724;"></div>
